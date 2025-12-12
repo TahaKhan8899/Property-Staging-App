@@ -288,3 +288,124 @@ export const generateStagedImage = async (
     throw new Error("Failed to generate staged image. Ensure you are using a paid API key for high-quality generation.");
   }
 };
+
+// 3. Edit Generated Image
+export const editGeneratedImage = async (
+  generatedImageUrl: string,
+  editInstructions: string,
+  onProgress?: (status: string, interimImage?: string) => void
+): Promise<string> => {
+  const apiKey = getApiKey();
+  if (!apiKey) throw new Error("API Key not found. Please select or enter a valid API key.");
+
+  const ai = new GoogleGenAI({ apiKey });
+
+  // Convert the generated image URL to base64
+  const base64Data = await fileToGenerativePart(generatedImageUrl);
+
+  // Construct the edit prompt using the template
+  const editPrompt = `Generate this exact same image, but make the following specific edits only:
+
+${editInstructions}
+
+Keep everything else IDENTICAL, including but not limited to:
+
+Structural elements
+
+Camera angle
+
+Perspective
+
+Lighting and shadows
+
+Flooring, walls, windows, doors, and trim
+
+Existing furniture, décor, materials, and object placement
+
+Color palette and overall composition
+
+Do not add any new objects unless explicitly listed above, and do not modify architecture or change the scene in any other way.`;
+
+  try {
+    const responseStream = await ai.models.generateContentStream({
+      model: MODEL_IMAGE_GENERATION,
+      contents: {
+        parts: [
+          {
+            inlineData: {
+              mimeType: 'image/jpeg',
+              data: base64Data
+            }
+          },
+          { text: editPrompt }
+        ]
+      },
+      config: {
+        imageConfig: {
+          imageSize: IMAGE_RESOLUTION,
+          aspectRatio: IMAGE_ASPECT_RATIO
+        }
+      }
+    });
+
+    let finalImageBase64: string | null = null;
+
+    for await (const chunk of responseStream) {
+      const candidates = chunk.candidates;
+      if (candidates && candidates.length > 0) {
+        for (const part of candidates[0].content.parts) {
+          // Check for Text (Thoughts)
+          if ((part as any).thought) {
+            if (part.text && onProgress) {
+              onProgress(part.text, undefined);
+            }
+            // Check for Interim Images
+            if (part.inlineData && part.inlineData.data && onProgress) {
+              const mime = part.inlineData.mimeType || 'image/png';
+              const rawBase64 = `data:${mime};base64,${part.inlineData.data}`;
+              onProgress(part.text || "Editing image...", rawBase64);
+            }
+          }
+
+          // Check for Final Image
+          if (part.inlineData && part.inlineData.data) {
+            if (!(part as any).thought) {
+              const mime = part.inlineData.mimeType || 'image/png';
+              finalImageBase64 = `data:${mime};base64,${part.inlineData.data}`;
+            }
+          }
+        }
+      }
+    }
+
+    if (finalImageBase64) {
+      // Convert to JPG client-side
+      return await new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          canvas.width = img.width;
+          canvas.height = img.height;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            reject(new Error('Failed to get canvas context'));
+            return;
+          }
+          // Draw white background in case of transparency
+          ctx.fillStyle = '#FFFFFF';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          ctx.drawImage(img, 0, 0);
+          const jpgDataUrl = canvas.toDataURL('image/jpeg', 0.9); // 90% quality
+          resolve(jpgDataUrl);
+        };
+        img.onerror = (err) => reject(new Error('Failed to load edited image for conversion'));
+        img.src = finalImageBase64!;
+      });
+    }
+
+    throw new Error("No image data returned from model.");
+  } catch (error) {
+    console.error("Error editing image:", error);
+    throw new Error("Failed to edit image. Please try again.");
+  }
+};

@@ -7,6 +7,15 @@ export enum RoomType {
   Other = 'Other',
 }
 
+export interface ImageVersion {
+  id: string;
+  roomId: string;
+  url: string;
+  timestamp: number;
+  description: string;
+  versionNumber: number;
+}
+
 export interface RoomData {
   id: string;
   file: File;
@@ -24,7 +33,12 @@ export interface RoomData {
   // Image Generation State
   generatedImageUrl?: string;
   isGeneratingImage: boolean;
+  isEditingImage?: boolean;
   error?: string;
+
+  // Version History
+  imageVersions?: ImageVersion[];
+  currentVersionId?: string;
 }
 
 export interface Session {

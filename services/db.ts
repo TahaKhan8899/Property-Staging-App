@@ -115,12 +115,24 @@ export const updateRoom = async (id: string, updates: Partial<RoomData>) => {
   await api.patch(`/rooms/${id}`, safeUpdates);
 };
 
-export const saveGeneratedImage = async (id: string, imageBase64: string): Promise<{ url: string }> => {
-  // Use post to custom endpoint
-  const res = await api.post(`/rooms/${id}/generated`, { imageBase64 });
-  // res should return { success: true, url: '/uploads/...' }
-  // We prepend localhost for frontend usage if needed, or let getFullUrl handle it on refresh.
-  // But here we return the full URL so state updates immediately.
+export const saveGeneratedImage = async (id: string, imageBase64: string, description?: string): Promise<{ url: string; version: any }> => {
+  const res = await api.post(`/rooms/${id}/generated`, { imageBase64, description });
+  return {
+    url: getFullUrl(res.url) || res.url,
+    version: res.version
+  };
+};
+
+export const getImageVersions = async (roomId: string) => {
+  const versions = await api.get(`/rooms/${roomId}/versions`);
+  return versions.map((v: any) => ({
+    ...v,
+    url: getFullUrl(v.url)
+  }));
+};
+
+export const restoreImageVersion = async (roomId: string, versionId: string): Promise<{ url: string }> => {
+  const res = await api.post(`/rooms/${roomId}/versions/${versionId}/restore`, {});
   return { url: getFullUrl(res.url) || res.url };
 };
 

@@ -4,6 +4,7 @@ import db from './db.js';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
+import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -275,11 +276,11 @@ app.post('/api/rooms', upload.single('file'), (req, res) => {
     }
 });
 
-// Save Generated Image to Disk
+// Save Generated Image to Disk with Versioning
 app.post('/api/rooms/:id/generated', (req, res) => {
     try {
         const { id } = req.params;
-        const { imageBase64 } = req.body;
+        const { imageBase64, description } = req.body;
 
         if (!imageBase64) return res.status(400).json({ error: 'No image data' });
 
@@ -287,28 +288,59 @@ app.post('/api/rooms/:id/generated', (req, res) => {
         const room = db.prepare('SELECT r.*, s.name as sessionName FROM rooms r JOIN sessions s ON r.sessionId = s.id WHERE r.id = ?').get(id);
         if (!room) return res.status(404).json({ error: 'Room not found' });
 
-        // 2. determine path
-        // Match original filename base
-        // room.filePath is likely "UnitName/original/Bedroom 1.jpg"
-        // We want "Bedroom 1.png"
+        // 2. Check if there's an existing image without a version entry (backward compatibility)
+        const existingVersions = db.prepare('SELECT COUNT(*) as count FROM image_versions WHERE roomId = ?').get(id);
+
+        // If room has a generatedImageUrl but no versions, create version 0 for the existing image
+        if (existingVersions.count === 0 && room.generatedImageUrl) {
+            const version0Id = crypto.randomUUID();
+            db.prepare(`
+                INSERT INTO image_versions (id, roomId, url, timestamp, description, versionNumber)
+                VALUES (?, ?, ?, ?, ?, ?)
+            `).run(version0Id, id, room.generatedImageUrl, Date.now() - 1000, 'Initial generation', 1);
+        }
+
+        // 3. Determine version number for new image
+        const versionCount = db.prepare('SELECT COUNT(*) as count FROM image_versions WHERE roomId = ?').get(id);
+        const versionNumber = versionCount.count + 1;
+
+        // 4. Generate filename with version
         const originalFileName = path.basename(room.filePath);
-        const originalBase = path.basename(originalFileName, path.extname(originalFileName)); // "Bedroom 1"
-        const newFileName = `${originalBase}.jpg`;
+        const originalBase = path.basename(originalFileName, path.extname(originalFileName));
+        const newFileName = `${originalBase}_v${versionNumber}.jpg`;
 
         const safeSessionName = sanitizeName(room.sessionName);
         const { staged } = ensureDirectories(getSessionFolderPath(room.sessionName));
         const targetPath = path.join(staged, newFileName);
 
-        // 3. Write File
-        // Remove header if present. Supports png and jpeg.
+        // 5. Write File
         const base64Data = imageBase64.replace(/^data:image\/\w+;base64,/, "");
         fs.writeFileSync(targetPath, base64Data, { encoding: 'base64' });
 
-        // 4. Update DB
+        // 6. Create version entry
+        const versionId = crypto.randomUUID();
         const relativePath = path.join(safeSessionName, 'staged', newFileName);
-        db.prepare('UPDATE rooms SET generatedImageUrl = ? WHERE id = ?').run(relativePath, id);
+        const timestamp = Date.now();
 
-        res.json({ success: true, url: `/uploads/${relativePath}` });
+        db.prepare(`
+            INSERT INTO image_versions (id, roomId, url, timestamp, description, versionNumber)
+            VALUES (?, ?, ?, ?, ?, ?)
+        `).run(versionId, id, relativePath, timestamp, description || 'Generated image', versionNumber);
+
+        // 7. Update Room
+        db.prepare('UPDATE rooms SET generatedImageUrl = ?, currentVersionId = ? WHERE id = ?')
+            .run(relativePath, versionId, id);
+
+        res.json({
+            success: true,
+            url: `/uploads/${relativePath}`,
+            version: {
+                id: versionId,
+                versionNumber,
+                timestamp,
+                description: description || 'Generated image'
+            }
+        });
 
     } catch (err) {
         console.error(err);
@@ -399,6 +431,43 @@ app.patch('/api/rooms/:id', (req, res) => {
         const data = { ...safeUpdates, id };
         db.prepare(query).run(data);
         res.json({ success: true });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Get all versions for a room
+app.get('/api/rooms/:id/versions', (req, res) => {
+    try {
+        const { id } = req.params;
+        const versions = db.prepare('SELECT * FROM image_versions WHERE roomId = ? ORDER BY versionNumber ASC').all(id);
+
+        // Add /uploads/ prefix to URLs
+        const processedVersions = versions.map(v => ({
+            ...v,
+            url: `/uploads/${v.url}`
+        }));
+
+        res.json(processedVersions);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Restore a specific version as current
+app.post('/api/rooms/:id/versions/:versionId/restore', (req, res) => {
+    try {
+        const { id, versionId } = req.params;
+
+        const version = db.prepare('SELECT * FROM image_versions WHERE id = ? AND roomId = ?').get(versionId, id);
+        if (!version) return res.status(404).json({ error: 'Version not found' });
+
+        db.prepare('UPDATE rooms SET generatedImageUrl = ?, currentVersionId = ? WHERE id = ?')
+            .run(version.url, versionId, id);
+
+        res.json({ success: true, url: `/uploads/${version.url}` });
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: err.message });
