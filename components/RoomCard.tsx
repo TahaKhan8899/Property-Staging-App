@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { RoomData, RoomType, ImageVersion } from '../types';
 import { generateStagingPrompt, generateStagedImage, refinePrompt, editGeneratedImage } from '../services/geminiService';
-import { saveGeneratedImage, getImageVersions, restoreImageVersion } from '../services/db';
+import { saveGeneratedImage, getImageVersions, restoreImageVersion, uploadStagedImage } from '../services/db';
 
 interface RoomCardProps {
   room: RoomData;
@@ -19,7 +19,10 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, onUpdate, onRemove }) => {
   const [editText, setEditText] = useState('');
   const [versions, setVersions] = useState<ImageVersion[]>(room.imageVersions || []);
   const [currentVersionIndex, setCurrentVersionIndex] = useState(0);
+  const [isUploadingStaged, setIsUploadingStaged] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Sync local state if parent updates
   useEffect(() => {
@@ -205,10 +208,43 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, onUpdate, onRemove }) => {
     }
   };
 
+  const handleUploadStaged = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setIsUploadingStaged(true);
+    onUpdate(room.id, { error: undefined });
+
+    try {
+      const { url, version } = await uploadStagedImage(room.id, file);
+      onUpdate(room.id, {
+        generatedImageUrl: url,
+        currentVersionId: version.id
+      });
+      await loadVersions();
+      // Reset file input
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    } catch (err) {
+      onUpdate(room.id, { error: (err as Error).message });
+    } finally {
+      setIsUploadingStaged(false);
+    }
+  };
+
   const handleDownload = () => {
     if (!room.generatedImageUrl) return;
     // Open image in new tab instead of downloading
     window.open(room.generatedImageUrl, '_blank');
+  };
+
+  const handleDeleteClick = () => {
+    if (showDeleteConfirm) {
+      onRemove(room.id);
+    } else {
+      setShowDeleteConfirm(true);
+      // Auto-reset after 3 seconds
+      setTimeout(() => setShowDeleteConfirm(false), 3000);
+    }
   };
 
   return (
@@ -234,11 +270,16 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, onUpdate, onRemove }) => {
           )}
         </div>
         <button
-          onClick={() => onRemove(room.id)}
-          className="text-gray-400 hover:text-red-500 transition-colors"
-          title="Remove Room"
+          onClick={handleDeleteClick}
+          className={`text-sm font-medium transition-colors px-3 py-1 rounded ${showDeleteConfirm
+              ? 'bg-red-500 text-white hover:bg-red-600'
+              : 'text-gray-400 hover:text-red-500'
+            }`}
+          title={showDeleteConfirm ? 'Click again to confirm deletion' : 'Remove Room'}
         >
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
+          {showDeleteConfirm ? 'Confirm Delete?' : (
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
+          )}
         </button>
       </div>
 
@@ -538,6 +579,33 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, onUpdate, onRemove }) => {
         {/* State 5: Image Done */}
         {room.generatedImageUrl && !room.isEditingImage && (
           <>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              onChange={handleUploadStaged}
+              className="hidden"
+            />
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={isUploadingStaged}
+              className="px-3 py-2 text-sm font-medium rounded-md transition-colors text-gray-700 hover:bg-gray-100 disabled:opacity-50 flex items-center gap-2"
+            >
+              {isUploadingStaged ? (
+                <>
+                  <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                  </svg>
+                  Uploading...
+                </>
+              ) : (
+                <>
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg>
+                  Upload Staged Image
+                </>
+              )}
+            </button>
             <button
               onClick={() => setIsEditingMode(!isEditingMode)}
               className={`px-3 py-2 text-sm font-medium rounded-md transition-colors ${isEditingMode

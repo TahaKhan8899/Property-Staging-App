@@ -123,6 +123,17 @@ export const saveGeneratedImage = async (id: string, imageBase64: string, descri
   };
 };
 
+export const uploadStagedImage = async (roomId: string, file: File): Promise<{ url: string; version: any }> => {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const res = await api.post(`/rooms/${roomId}/upload-staged`, formData);
+  return {
+    url: getFullUrl(res.url) || res.url,
+    version: res.version
+  };
+};
+
 export const getImageVersions = async (roomId: string) => {
   const versions = await api.get(`/rooms/${roomId}/versions`);
   return versions.map((v: any) => ({

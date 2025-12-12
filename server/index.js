@@ -402,6 +402,81 @@ app.post('/api/rooms/:id/generated', (req, res) => {
     }
 });
 
+// Upload External Staged Image (e.g., Canva edits)
+app.post('/api/rooms/:id/upload-staged', upload.single('file'), (req, res) => {
+    try {
+        if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+
+        const { id } = req.params;
+
+        // 1. Get Room Info
+        const room = db.prepare('SELECT r.*, s.name as sessionName FROM rooms r JOIN sessions s ON r.sessionId = s.id WHERE r.id = ?').get(id);
+        if (!room) {
+            fs.unlinkSync(req.file.path); // clean temp
+            return res.status(404).json({ error: 'Room not found' });
+        }
+
+        // 2. Check if there's an existing image without a version entry (backward compatibility)
+        const existingVersions = db.prepare('SELECT COUNT(*) as count FROM image_versions WHERE roomId = ?').get(id);
+
+        // If room has a generatedImageUrl but no versions, create version 0 for the existing image
+        if (existingVersions.count === 0 && room.generatedImageUrl) {
+            const version0Id = crypto.randomUUID();
+            db.prepare(`
+                INSERT INTO image_versions (id, roomId, url, timestamp, description, versionNumber)
+                VALUES (?, ?, ?, ?, ?, ?)
+            `).run(version0Id, id, room.generatedImageUrl, Date.now() - 1000, 'Initial generation', 1);
+        }
+
+        // 3. Determine version number for new image
+        const versionCount = db.prepare('SELECT COUNT(*) as count FROM image_versions WHERE roomId = ?').get(id);
+        const versionNumber = versionCount.count + 1;
+
+        // 4. Generate filename with version
+        const originalFileName = path.basename(room.filePath);
+        const originalBase = path.basename(originalFileName, path.extname(originalFileName));
+        const uploadExt = path.extname(req.file.originalname) || '.jpg';
+        const newFileName = `${originalBase}_v${versionNumber}${uploadExt}`;
+
+        const safeSessionName = sanitizeName(room.sessionName);
+        const { staged } = ensureDirectories(getSessionFolderPath(room.sessionName));
+        const targetPath = path.join(staged, newFileName);
+
+        // 5. Move uploaded file from temp to staged folder
+        fs.renameSync(req.file.path, targetPath);
+
+        // 6. Create version entry
+        const versionId = crypto.randomUUID();
+        const relativePath = path.join(safeSessionName, 'staged', newFileName);
+        const timestamp = Date.now();
+
+        db.prepare(`
+            INSERT INTO image_versions (id, roomId, url, timestamp, description, versionNumber)
+            VALUES (?, ?, ?, ?, ?, ?)
+        `).run(versionId, id, relativePath, timestamp, 'Uploaded external image', versionNumber);
+
+        // 7. Update Room
+        db.prepare('UPDATE rooms SET generatedImageUrl = ?, currentVersionId = ? WHERE id = ?')
+            .run(relativePath, versionId, id);
+
+        res.json({
+            success: true,
+            url: `/uploads/${relativePath}`,
+            version: {
+                id: versionId,
+                versionNumber,
+                timestamp,
+                description: 'Uploaded external image'
+            }
+        });
+
+    } catch (err) {
+        console.error('Upload staged error:', err);
+        if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 app.patch('/api/rooms/:id', (req, res) => {
     try {
         const { id } = req.params;
