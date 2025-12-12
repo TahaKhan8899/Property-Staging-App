@@ -16,6 +16,16 @@ export const fileToGenerativePart = async (file: File): Promise<string> => {
   });
 };
 
+// Helper to retrieve API key directly from storage or env
+export const getApiKey = (): string | undefined => {
+  if (import.meta.env.VITE_GEMINI_API_KEY) {
+    return import.meta.env.VITE_GEMINI_API_KEY;
+  }
+  const stored = localStorage.getItem('gemini_api_key');
+  if (stored) return stored;
+  return process.env.API_KEY;
+};
+
 // 1. Generate Staging Prompt
 export const generateStagingPrompt = async (
   file: File, 
@@ -23,7 +33,10 @@ export const generateStagingPrompt = async (
   customLabel?: string
 ): Promise<string> => {
   // Re-instantiate to ensure we catch the latest API key from environment if it was just selected
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  const apiKey = getApiKey();
+  if (!apiKey) throw new Error("API Key not found. Please select or enter a valid API key.");
+  
+  const ai = new GoogleGenAI({ apiKey });
   
   const base64Data = await fileToGenerativePart(file);
   const actualLabel = roomType === 'Other' ? customLabel || 'Room' : roomType;
@@ -67,7 +80,10 @@ export const generateStagedImage = async (
   prompt: string
 ): Promise<string> => {
   // Re-instantiate for latest key
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  const apiKey = getApiKey();
+  if (!apiKey) throw new Error("API Key not found. Please select or enter a valid API key.");
+
+  const ai = new GoogleGenAI({ apiKey });
   
   const base64Data = await fileToGenerativePart(originalFile);
 

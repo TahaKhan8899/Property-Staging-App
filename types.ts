@@ -13,13 +13,13 @@ export interface RoomData {
   previewUrl: string;
   roomType: RoomType;
   customLabel: string;
-  
+
   // Prompt State
   initialPrompt?: string; // Stores the original AI output for reset functionality
   generatedPrompt: string;
   isGeneratingPrompt: boolean;
   isPromptApproved: boolean;
-  
+
   // Image Generation State
   generatedImageUrl?: string;
   isGeneratingImage: boolean;
@@ -33,10 +33,12 @@ export interface Session {
   rooms: RoomData[];
 }
 
-// Augment window for AI Studio specific API key handling
 declare global {
   interface AIStudio {
     hasSelectedApiKey: () => Promise<boolean>;
     openSelectKey: () => Promise<void>;
+  }
+  interface Window {
+    aistudio?: AIStudio;
   }
 }

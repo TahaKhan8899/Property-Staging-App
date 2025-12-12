@@ -1,0 +1,267 @@
+Here is the **exact same PRD**, cleanly formatted in **Markdown** so you can paste it directly into Gemini 3 (AI Studio → Build Mode) as your spec.
+
+---
+
+# **PRD — WH Staging Assistant (MVP)**
+
+### **0. Working Title**
+
+**Product Name:** WH Staging Assistant (MVP)
+**Owner:** Taha
+**Environment:** Google AI Studio (Gemini 3 Pro + Nano Banana Pro)
+
+---
+
+# **1. Problem & Goal**
+
+## **Problem**
+
+The current WH Property staging workflow is manual and repetitive:
+
+* Manually select 4–5 images for each floor plan.
+* Open ChatGPT with a designer LLM persona, upload each image, and request a staging prompt.
+* Manually copy that staging prompt + image into Nano Banana Pro to generate a 4K staged image.
+* Repeat for every room.
+* Review, download, organize, and deliver.
+
+This process costs **~60–70 minutes per unit** and involves constant context switching.
+
+## **Goal**
+
+Build a **single minimal app** that:
+
+1. Accepts room images (4–5 per unit).
+2. Lets me label each image (Bedroom, Living Room, Kitchen, etc.).
+3. Automatically generates high-quality **staging prompts** using Gemini 3 + my designer system prompt.
+4. Lets me manually **review/edit/approve** each prompt.
+5. Allows **one-click** to generate a 4K staged image via Nano Banana Pro.
+6. Displays **original vs staged** images side-by-side and allows download.
+
+**Success metric:** Cut per-unit staging pipeline time at least **50%**.
+
+---
+
+# **2. User & Usage Context**
+
+### **User**
+
+* Only internal user: Taha.
+* Comfortable with AI tooling and light technical interfaces.
+
+### **Usage**
+
+* One “unit session” at a time.
+* Upload 4–5 room images per unit.
+* No need for multi-user features or persistent cloud storage in MVP.
+
+---
+
+# **3. High-Level Workflow**
+
+1. **Create New Unit**
+
+   * User enters a name (e.g., “B4 – WH Property”).
+
+2. **Upload Images**
+
+   * User uploads 4–5 JPG/PNG files from local computer.
+   * App stores images temporarily in session state.
+
+3. **Label Rooms**
+
+   * User selects room type for each image:
+
+     * Bedroom
+     * Living Room
+     * Kitchen
+     * Bathroom
+     * Patio / Balcony
+     * Other (custom text)
+
+4. **Generate Staging Prompts**
+
+   * User clicks “Generate Prompts”.
+   * App sends each image + room label + designer system prompt to Gemini 3 Pro.
+   * Gemini returns a detailed staging prompt per image.
+
+5. **Review & Edit Prompts**
+
+   * Each room appears as a card:
+
+     * Left: original image thumbnail
+     * Right: editable prompt text area
+     * Buttons: **Regenerate**, **Reset**, **Approve Prompt**
+
+6. **Generate Staged Images**
+
+   * Once a prompt is approved:
+
+     * User clicks “Generate Staged Image”
+     * App sends original image + approved prompt to image generator (Nano Banana Pro).
+     * Settings:
+
+       * **4K resolution (~3840×2160)**
+       * **16:9 aspect ratio**
+       * Photorealistic, modern, renter-friendly style
+
+7. **Review Outputs**
+
+   * Display original vs staged image side-by-side.
+   * Provide **Download** button per staged image.
+   * Optional (future): Download all as ZIP.
+
+8. **Session End**
+
+   * Data can be stored only in memory for MVP.
+
+---
+
+# **4. Functional Requirements**
+
+## **4.1 Unit/Project Management**
+
+* Ability to name a session.
+* Only one session needed at a time.
+* Persistence **not required**.
+
+---
+
+## **4.2 Image Upload & Room Labeling**
+
+* Support file picker + drag-and-drop.
+* Accept `.jpg`, `.jpeg`, `.png`.
+* Show thumbnails.
+* Each image must have:
+
+  * Filename
+  * Thumbnail
+  * Room-type dropdown (+ free-text when “Other”)
+
+---
+
+## **4.3 Prompt Generation via Gemini 3 Pro**
+
+* Use **Gemini 3 Pro** for image analysis.
+* Inputs:
+
+  * System prompt = Designer LLM aesthetic & rules (`DESIGNER_SYSTEM_PROMPT`)
+  * Room type (dynamic)
+  * Prompt template:
+
+**User Prompt Template:**
+
+```
+Analyze this {ROOM_TYPE} and generate a detailed virtual staging prompt for it.
+Follow the design rules in the system prompt.
+Keep all architectural elements exactly the same.
+Output only the staging prompt text.
+```
+
+* Handle API failures with per-card retry.
+
+---
+
+## **4.4 Prompt Review UI**
+
+Each room card must show:
+
+* Original image thumbnail
+* Editable prompt text box
+* Buttons:
+
+  * **Regenerate**
+  * **Reset to last generated**
+  * **Approve Prompt**
+
+State indicators per card:
+
+* “Awaiting prompt”
+* “Prompt generated”
+* “Prompt approved”
+* “Image generated”
+
+---
+
+## **4.5 Image Generation (Nano Banana Pro)**
+
+When a prompt is approved, user can trigger generation:
+
+Inputs:
+
+* Original room image
+* Approved staging prompt
+* Parameters:
+
+  * Resolution: **4K**
+  * Aspect Ratio: **16:9**
+  * Style: photorealistic, clean, modern, renter-friendly
+
+Outputs:
+
+* A staged image displayed beside original.
+* Download button for staged image.
+
+---
+
+## **4.6 Layout & UX**
+
+Single-page layout:
+
+1. Header with unit name + quick stats.
+2. Image upload area.
+3. Room cards grid.
+
+Each room card:
+
+* Room label
+* Image thumbnail
+* Prompt text area + controls
+* Staged image preview (if generated)
+
+---
+
+# **5. AI Prompts / Config**
+
+## **5.1 Designer System Prompt**
+
+* Must exist as a separate constant in code.
+* User (Taha) will paste in full WH Property prompt.
+* Treat as:
+  `const DESIGNER_SYSTEM_PROMPT = "...";`
+
+## **5.2 Prompt Template**
+
+* Parameterized by room type.
+* See template in Section 4.3.
+
+---
+
+# **6. Technical Constraints & Preferences**
+
+* **Platform:** Google AI Studio Build Mode
+* **Model:** Gemini 3 Pro for prompt generation
+* **Image Generator:** Nano Banana Pro
+* **Frontend:** React + TypeScript (or lightweight equivalent)
+* **Storage:** in-memory only (MVP)
+* **No need for:** authentication, database, file persistence
+
+---
+
+# **7. Non-Goals (Out of Scope)**
+
+* Dropbox API integration
+* Persistent cloud storage
+* Multi-user support
+* Advanced QA automation
+* Exporting reports or PDFs
+
+---
+
+# **8. Nice-to-Haves (Future)**
+
+* Persisting sessions to Firestore
+* ZIP download for all staged images
+* QA checklist integration
+* Style presets for different clients
+
+---

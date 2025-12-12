@@ -1,20 +1,50 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# WH Staging Assistant (MVP)
 
-# Run and deploy your AI Studio app
+**Automating the property staging workflow with Gemini 3 Pro and Nano Banana Pro.**
 
-This contains everything you need to run your app locally.
+## Problem
+The previous staging workflow was manual and repetitive, costing ~60-70 minutes per unit:
+1. Manually selecting images.
+2. Using ChatGPT with a persona to generate prompts.
+3. Copy-pasting prompts into an image generator.
+4. Repeating for every room.
 
-View your app in AI Studio: https://ai.studio/apps/drive/1TwFds1Aw83RxHDfBksuOUIBnQ-ePHFA-
+## Goal
+A single, minimal app to cut staging time by 50% by automating prompt generation and providing a unified interface for review and generation.
 
-## Run Locally
+## Features
+- **Project Structure**: Organize work by "Unit" (e.g., "B4 - WH Property").
+- **Image Upload**: Upload 4-5 room images at once (JPG/PNG).
+- **Room Labeling**: Tag images as Bedroom, Living Room, Kitchen, etc.
+- **Auto-Prompter**: Uses **Gemini 3 Pro** to analyze rooms and generate detailed staging prompts based on a designer system prompt.
+- **Review & Edit**: Manually review, edit, and approve prompts before generation.
+- **4K Generation**: One-click generation of 4K, 16:9 staged images using **Nano Banana Pro**.
+- **Comparison**: Side-by-side view of original vs. staged images.
 
-**Prerequisites:**  Node.js
+## Technology Stack
+- **Frontend**: React + TypeScript
+- **AI Models**: 
+  - Gemini 3 Pro (Prompt Generation & Image Analysis)
+  - Nano Banana Pro (Image Generation)
+- **State**: Local/In-memory (MVP)
 
+## Local Setup
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+**Prerequisites:** Node.js
+
+1. **Install dependencies:**
+   ```bash
+   npm install
+   ```
+
+2. **Configure API Key:**
+   - Create a `.env.local` file (optional, or enter key in UI).
+   - Set `VITE_GEMINI_API_KEY=your_key_here`.
+
+3. **Run the app:**
+   ```bash
+   npm run dev
+   ```
+
+This application was originally bootstrapped in Google AI Studio.
+
