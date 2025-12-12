@@ -220,7 +220,8 @@ app.post('/api/rooms', upload.single('file'), (req, res) => {
         // 3. Generate Name
         // e.g. "Bedroom 1.jpg"
         const ext = path.extname(req.file.originalname) || '.jpg';
-        const newFileName = `${roomType} ${nextIndex}${ext}`;
+        const safeRoomType = sanitizeName(roomType);
+        const newFileName = `${safeRoomType} ${nextIndex}${ext}`;
 
         // 4. Move File
         const safeSessionName = sanitizeName(session.name);
@@ -292,14 +293,14 @@ app.post('/api/rooms/:id/generated', (req, res) => {
         // We want "Bedroom 1.png"
         const originalFileName = path.basename(room.filePath);
         const originalBase = path.basename(originalFileName, path.extname(originalFileName)); // "Bedroom 1"
-        const newFileName = `${originalBase}.png`;
+        const newFileName = `${originalBase}.jpg`;
 
         const safeSessionName = sanitizeName(room.sessionName);
         const { staged } = ensureDirectories(getSessionFolderPath(room.sessionName));
         const targetPath = path.join(staged, newFileName);
 
         // 3. Write File
-        // Remove header if present "data:image/png;base64,"
+        // Remove header if present. Supports png and jpeg.
         const base64Data = imageBase64.replace(/^data:image\/\w+;base64,/, "");
         fs.writeFileSync(targetPath, base64Data, { encoding: 'base64' });
 
@@ -354,8 +355,8 @@ app.patch('/api/rooms/:id', (req, res) => {
                     // Also handle staged file if exists
                     if (currentRoom.generatedImageUrl && !currentRoom.generatedImageUrl.startsWith('data:')) {
                         const oldStaged = path.join(__dirname, 'uploads', currentRoom.generatedImageUrl);
-                        // assume png for staged
-                        const stagedExt = path.extname(currentRoom.generatedImageUrl) || '.png';
+                        // assume jpg for staged
+                        const stagedExt = path.extname(currentRoom.generatedImageUrl) || '.jpg';
                         const newStagedName = `${updates.roomType} ${nextIndex}${stagedExt}`;
                         const newStagedPath = path.join(sessionPath, 'staged', newStagedName);
                         if (fs.existsSync(oldStaged)) {

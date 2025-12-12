@@ -3,7 +3,7 @@ export enum RoomType {
   LivingRoom = 'Living Room',
   Kitchen = 'Kitchen',
   Bathroom = 'Bathroom',
-  PatioBalcony = 'Patio / Balcony',
+  PatioBalcony = 'Patio',
   Other = 'Other',
 }
 

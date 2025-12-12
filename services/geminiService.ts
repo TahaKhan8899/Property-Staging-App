@@ -174,7 +174,30 @@ export const generateStagedImage = async (
       for (const part of candidates[0].content.parts) {
         if (part.inlineData && part.inlineData.data) {
           const mimeType = part.inlineData.mimeType || 'image/png';
-          return `data:${mimeType};base64,${part.inlineData.data}`;
+          const rawBase64 = `data:${mimeType};base64,${part.inlineData.data}`;
+
+          // Convert to JPG client-side
+          return await new Promise((resolve, reject) => {
+            const img = new Image();
+            img.onload = () => {
+              const canvas = document.createElement('canvas');
+              canvas.width = img.width;
+              canvas.height = img.height;
+              const ctx = canvas.getContext('2d');
+              if (!ctx) {
+                reject(new Error('Failed to get canvas context'));
+                return;
+              }
+              // Draw white background in case of transparency
+              ctx.fillStyle = '#FFFFFF';
+              ctx.fillRect(0, 0, canvas.width, canvas.height);
+              ctx.drawImage(img, 0, 0);
+              const jpgDataUrl = canvas.toDataURL('image/jpeg', 0.9); // 90% quality
+              resolve(jpgDataUrl);
+            };
+            img.onerror = (err) => reject(new Error('Failed to load generated image for conversion'));
+            img.src = rawBase64;
+          });
         }
       }
     }
