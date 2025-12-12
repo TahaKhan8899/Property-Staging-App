@@ -11,6 +11,8 @@ interface RoomCardProps {
 
 const RoomCard: React.FC<RoomCardProps> = ({ room, onUpdate, onRemove }) => {
   const [promptText, setPromptText] = useState(room.generatedPrompt);
+  const [progressThought, setProgressThought] = useState<string>('');
+  const [interimImageUrl, setInterimImageUrl] = useState<string | undefined>(undefined);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // Sync local state if parent updates
@@ -63,8 +65,18 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, onUpdate, onRemove }) => {
     if (!room.isPromptApproved) return;
 
     onUpdate(room.id, { isGeneratingImage: true, error: undefined });
+    setProgressThought('Initializing...');
+    setInterimImageUrl(undefined);
+
     try {
-      const imageBase64 = await generateStagedImage(room.file || room.previewUrl, room.generatedPrompt);
+      const imageBase64 = await generateStagedImage(
+        room.file || room.previewUrl,
+        room.generatedPrompt,
+        (status, img) => {
+          if (status) setProgressThought(status);
+          if (img) setInterimImageUrl(img);
+        }
+      );
       const { url } = await saveGeneratedImage(room.id, imageBase64);
       onUpdate(room.id, {
         generatedImageUrl: url,
@@ -75,6 +87,9 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, onUpdate, onRemove }) => {
         isGeneratingImage: false,
         error: (err as Error).message
       });
+    } finally {
+      setProgressThought('');
+      setInterimImageUrl(undefined);
     }
   };
 
@@ -155,6 +170,36 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, onUpdate, onRemove }) => {
                     Download 4K
                   </button>
                 </div>
+              </div>
+            </>
+          ) : room.isGeneratingImage ? (
+            /* Generating View with Progress */
+            <>
+              <span className="text-xs font-semibold text-indigo-600 uppercase tracking-wider flex items-center gap-2 animate-pulse">
+                <svg className="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                Generating...
+              </span>
+              <div className="relative aspect-video bg-gray-50 rounded-lg overflow-hidden border border-gray-200 flex flex-col items-center justify-center">
+                {interimImageUrl ? (
+                  <>
+                    <img src={interimImageUrl} alt="Interim Staging" className="w-full h-full object-cover opacity-80 blur-sm transition-all duration-500" />
+                    <div className="absolute inset-x-0 bottom-0 bg-black/50 p-2 text-white text-xs text-center backdrop-blur-md">
+                      {progressThought}
+                    </div>
+                  </>
+                ) : (
+                  <div className="flex flex-col items-center gap-3 p-6 text-center">
+                    <div className="animate-bounce">
+                      <svg className="w-8 h-8 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+                      </svg>
+                    </div>
+                    <p className="text-sm text-gray-500 font-medium animate-pulse">{progressThought || 'Connecting to Gemini...'}</p>
+                  </div>
+                )}
               </div>
             </>
           ) : (
@@ -256,7 +301,8 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, onUpdate, onRemove }) => {
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
             </svg>
-            Rendering 4K Image...
+            {/* Show Timer equivalent, but mostly status now */}
+            Thinking & Rendering...
           </button>
         )}
 

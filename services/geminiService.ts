@@ -129,7 +129,8 @@ Output only the staging prompt text.
 // 2. Generate Staged Image
 export const generateStagedImage = async (
   originalFileOrUrl: File | string,
-  prompt: string
+  prompt: string,
+  onProgress?: (status: string, interimImage?: string) => void
 ): Promise<string> => {
   // Re-instantiate for latest key
   const apiKey = getApiKey();
@@ -147,7 +148,7 @@ export const generateStagedImage = async (
   }
 
   try {
-    const response = await ai.models.generateContent({
+    const responseStream = await ai.models.generateContentStream({
       model: MODEL_IMAGE_GENERATION,
       contents: {
         parts: [
@@ -168,38 +169,68 @@ export const generateStagedImage = async (
       }
     });
 
-    // Check for image part in response
-    const candidates = response.candidates;
-    if (candidates && candidates.length > 0) {
-      for (const part of candidates[0].content.parts) {
-        if (part.inlineData && part.inlineData.data) {
-          const mimeType = part.inlineData.mimeType || 'image/png';
-          const rawBase64 = `data:${mimeType};base64,${part.inlineData.data}`;
+    let finalImageBase64: string | null = null;
 
-          // Convert to JPG client-side
-          return await new Promise((resolve, reject) => {
-            const img = new Image();
-            img.onload = () => {
-              const canvas = document.createElement('canvas');
-              canvas.width = img.width;
-              canvas.height = img.height;
-              const ctx = canvas.getContext('2d');
-              if (!ctx) {
-                reject(new Error('Failed to get canvas context'));
-                return;
-              }
-              // Draw white background in case of transparency
-              ctx.fillStyle = '#FFFFFF';
-              ctx.fillRect(0, 0, canvas.width, canvas.height);
-              ctx.drawImage(img, 0, 0);
-              const jpgDataUrl = canvas.toDataURL('image/jpeg', 0.9); // 90% quality
-              resolve(jpgDataUrl);
-            };
-            img.onerror = (err) => reject(new Error('Failed to load generated image for conversion'));
-            img.src = rawBase64;
-          });
+    for await (const chunk of responseStream) {
+      const candidates = chunk.candidates;
+      if (candidates && candidates.length > 0) {
+        for (const part of candidates[0].content.parts) {
+          // Check for Text (Thoughts)
+          // The SDK/API returns thoughts as text parts with a 'thought' property being true,
+          // but the SDK typing might not strictly expose 'thought' on Part yet depending on version.
+          // Based on docs: "if (part.thought)"
+          if ((part as any).thought) {
+            if (part.text && onProgress) {
+              onProgress(part.text, undefined);
+            }
+            // Check for Interim Images (InlineData inside thought)
+            if (part.inlineData && part.inlineData.data && onProgress) {
+              const mime = part.inlineData.mimeType || 'image/png';
+              const rawBase64 = `data:${mime};base64,${part.inlineData.data}`;
+              onProgress(part.text || "Generating preview...", rawBase64);
+            }
+          }
+          // Check for Final Image (InlineData NOT marked as thought, or just the last image)
+          // The docs say: "The last image within Thinking is also the final rendered image."
+          // But usually the final response part contains the result.
+          // We will look for inlineData.
+
+          if (part.inlineData && part.inlineData.data) {
+            // We'll treat every image as potentially final or interim.
+            // If it's a thought, we streamed it. 
+            // If it's NOT a thought, it's likely the final one.
+            if (!(part as any).thought) {
+              const mime = part.inlineData.mimeType || 'image/png';
+              finalImageBase64 = `data:${mime};base64,${part.inlineData.data}`;
+            }
+          }
         }
       }
+    }
+
+    if (finalImageBase64) {
+      // Convert to JPG client-side
+      return await new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          canvas.width = img.width;
+          canvas.height = img.height;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            reject(new Error('Failed to get canvas context'));
+            return;
+          }
+          // Draw white background in case of transparency
+          ctx.fillStyle = '#FFFFFF';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          ctx.drawImage(img, 0, 0);
+          const jpgDataUrl = canvas.toDataURL('image/jpeg', 0.9); // 90% quality
+          resolve(jpgDataUrl);
+        };
+        img.onerror = (err) => reject(new Error('Failed to load generated image for conversion'));
+        img.src = finalImageBase64!;
+      });
     }
 
     throw new Error("No image data returned from model.");
