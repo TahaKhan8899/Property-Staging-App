@@ -5,7 +5,8 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
-import { fileURLToPath } from 'url';
+import sharp from 'sharp';
+import { fileURLToPath, URL } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -26,6 +27,53 @@ const sanitizeName = (name) => {
     return name.replace(/[^a-zA-Z0-9 \-_\(\)]/g, '').trim();
 };
 
+// Normalize whatever is stored in DB (relative path, /uploads prefix, or full URL)
+const normalizeStoredUploadPath = (storedPath = '') => {
+    if (!storedPath) return '';
+
+    let cleaned = storedPath.replace(/\\/g, '/').trim();
+
+    if (/^https?:\/\//i.test(cleaned)) {
+        try {
+            const parsed = new URL(cleaned);
+            cleaned = parsed.pathname || '';
+        } catch {
+            cleaned = cleaned.replace(/^https?:\/\/[^/]+/, '');
+        }
+    }
+
+    cleaned = cleaned.replace(/^\/+/, '');
+    if (cleaned.startsWith('uploads/')) {
+        cleaned = cleaned.slice('uploads/'.length);
+    }
+    cleaned = cleaned.replace(/^\/+/, '');
+
+    try {
+        cleaned = decodeURIComponent(cleaned);
+    } catch {
+        // ignore decode issues, fall back to raw string
+    }
+
+    return cleaned;
+};
+
+// Resolve a stored path to an absolute file on disk under /uploads
+const getUploadFilePath = (storedPath = '') => {
+    const relative = normalizeStoredUploadPath(storedPath);
+    if (!relative) return null;
+    return path.join(__dirname, 'uploads', relative);
+};
+
+// Convert stored path to a URL the client can consume
+const getPublicUploadUrl = (storedPath = '') => {
+    if (!storedPath) return '';
+    if (storedPath.startsWith('data:')) return storedPath;
+    if (/^https?:\/\//i.test(storedPath)) return storedPath;
+
+    const relative = normalizeStoredUploadPath(storedPath);
+    return relative ? `/uploads/${relative}` : '';
+};
+
 // Get Session Folder Path
 const getSessionFolderPath = (sessionName) => {
     const safeName = sanitizeName(sessionName || 'Untitled Session');
@@ -36,9 +84,11 @@ const getSessionFolderPath = (sessionName) => {
 const ensureDirectories = (sessionPath) => {
     const original = path.join(sessionPath, 'original');
     const staged = path.join(sessionPath, 'staged');
-    if (!fs.existsSync(original)) fs.mkdirSync(original, { recursive: true });
-    if (!fs.existsSync(staged)) fs.mkdirSync(staged, { recursive: true });
-    return { original, staged };
+    const stagedCompressed = path.join(sessionPath, 'staged-compressed');
+    [original, staged, stagedCompressed].forEach(dir => {
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    });
+    return { original, staged, stagedCompressed };
 };
 
 // Configure Multer (Temp storage)
@@ -234,15 +284,13 @@ app.get('/api/sessions/:id/rooms', (req, res) => {
                 r[f] = !!r[f];
             });
 
-            // Construct Paths
-            // stored filePath should be relative from uploads root? Or Session root?
-            // "Unit A/original/Bedroom 1.jpg" is best for uniqueness.
-            // We append /uploads/ for frontend serving.
-            if (r.filePath && !r.filePath.startsWith('http')) {
-                r.filePath = `/uploads/${r.filePath}`;
+            if (r.filePath) {
+                const publicOriginal = getPublicUploadUrl(r.filePath);
+                if (publicOriginal) r.filePath = publicOriginal;
             }
-            if (r.generatedImageUrl && !r.generatedImageUrl.startsWith('data:') && !r.generatedImageUrl.startsWith('http')) {
-                r.generatedImageUrl = `/uploads/${r.generatedImageUrl}`;
+            if (r.generatedImageUrl) {
+                const publicStaged = getPublicUploadUrl(r.generatedImageUrl);
+                if (publicStaged) r.generatedImageUrl = publicStaged;
             }
             return r;
         });
@@ -507,20 +555,20 @@ app.patch('/api/rooms/:id', (req, res) => {
                 const nextIndex = countRes.count + 1;
                 const newFileName = `${updates.roomType} ${nextIndex}${ext}`;
 
-                const oldFullPath = path.join(__dirname, 'uploads', currentRoom.filePath);
+                const oldFullPath = getUploadFilePath(currentRoom.filePath);
                 const newFullPath = path.join(sessionPath, 'original', newFileName);
 
-                if (fs.existsSync(oldFullPath)) {
+                if (oldFullPath && fs.existsSync(oldFullPath)) {
                     fs.renameSync(oldFullPath, newFullPath);
 
                     // Also handle staged file if exists
                     if (currentRoom.generatedImageUrl && !currentRoom.generatedImageUrl.startsWith('data:')) {
-                        const oldStaged = path.join(__dirname, 'uploads', currentRoom.generatedImageUrl);
+                        const oldStaged = getUploadFilePath(currentRoom.generatedImageUrl);
                         // assume jpg for staged
                         const stagedExt = path.extname(currentRoom.generatedImageUrl) || '.jpg';
                         const newStagedName = `${updates.roomType} ${nextIndex}${stagedExt}`;
                         const newStagedPath = path.join(sessionPath, 'staged', newStagedName);
-                        if (fs.existsSync(oldStaged)) {
+                        if (oldStaged && fs.existsSync(oldStaged)) {
                             fs.renameSync(oldStaged, newStagedPath);
                             updates.generatedImageUrl = path.join(safeSessionName, 'staged', newStagedName);
                         }
@@ -572,11 +620,14 @@ app.get('/api/rooms/:id/versions', (req, res) => {
         const { id } = req.params;
         const versions = db.prepare('SELECT * FROM image_versions WHERE roomId = ? ORDER BY versionNumber ASC').all(id);
 
-        // Add /uploads/ prefix to URLs
-        const processedVersions = versions.map(v => ({
-            ...v,
-            url: `/uploads/${v.url}`
-        }));
+        // Normalize stored URLs so the client always gets something usable
+        const processedVersions = versions.map(v => {
+            const normalizedUrl = getPublicUploadUrl(v.url);
+            return {
+                ...v,
+                url: normalizedUrl || v.url
+            };
+        });
 
         res.json(processedVersions);
     } catch (err) {
@@ -596,10 +647,72 @@ app.post('/api/rooms/:id/versions/:versionId/restore', (req, res) => {
         db.prepare('UPDATE rooms SET generatedImageUrl = ?, currentVersionId = ? WHERE id = ?')
             .run(version.url, versionId, id);
 
-        res.json({ success: true, url: `/uploads/${version.url}` });
+        res.json({ success: true, url: getPublicUploadUrl(version.url) || version.url });
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: err.message });
+    }
+});
+
+// Download compressed version of current staged image
+app.get('/api/rooms/:id/download-compressed', async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        // Get room info
+        const room = db.prepare('SELECT r.*, s.name as sessionName FROM rooms r JOIN sessions s ON r.sessionId = s.id WHERE r.id = ?').get(id);
+        if (!room) return res.status(404).json({ error: 'Room not found' });
+        if (!room.generatedImageUrl) return res.status(404).json({ error: 'No staged image found' });
+
+        // Construct full path to the staged image
+        const imagePath = getUploadFilePath(room.generatedImageUrl);
+        if (!imagePath || !fs.existsSync(imagePath)) {
+            console.warn('download-compressed missing file', {
+                roomId: id,
+                storedPath: room.generatedImageUrl,
+                resolvedPath: imagePath
+            });
+            return res.status(404).json({ error: 'Image file not found on disk' });
+        }
+
+        const sessionPath = getSessionFolderPath(room.sessionName);
+        const { stagedCompressed } = ensureDirectories(sessionPath);
+
+        // Generate filename for download + storage
+        const originalFileName = path.basename(room.filePath);
+        const originalBase = path.basename(originalFileName, path.extname(originalFileName));
+        const downloadFileName = `${originalBase}_compressed.jpg`;
+        const compressedPath = path.join(stagedCompressed, downloadFileName);
+
+        // Create compressed copy on disk if missing or source newer
+        let regenerateCompressed = true;
+        if (fs.existsSync(compressedPath)) {
+            try {
+                const sourceStat = fs.statSync(imagePath);
+                const compressedStat = fs.statSync(compressedPath);
+                regenerateCompressed = sourceStat.mtimeMs > compressedStat.mtimeMs;
+            } catch {
+                regenerateCompressed = true;
+            }
+        }
+
+        if (regenerateCompressed) {
+            await sharp(imagePath)
+                .jpeg({ quality: 50, mozjpeg: true })
+                .toFile(compressedPath);
+        }
+
+        // Compress image on-the-fly and stream to client
+        res.setHeader('Content-Type', 'image/jpeg');
+        res.setHeader('Content-Disposition', `attachment; filename="${downloadFileName}"`);
+
+        fs.createReadStream(compressedPath).pipe(res);
+
+    } catch (err) {
+        console.error('Compression error:', err);
+        if (!res.headersSent) {
+            res.status(500).json({ error: err.message });
+        }
     }
 });
 
@@ -613,13 +726,13 @@ app.delete('/api/rooms/:id', (req, res) => {
         if (room) {
             // Delete Original
             if (room.filePath) {
-                const fullPath = path.join(__dirname, 'uploads', room.filePath);
-                if (fs.existsSync(fullPath)) fs.unlinkSync(fullPath);
+                const fullPath = getUploadFilePath(room.filePath);
+                if (fullPath && fs.existsSync(fullPath)) fs.unlinkSync(fullPath);
             }
             // Delete Staged
             if (room.generatedImageUrl && !room.generatedImageUrl.startsWith('data:')) {
-                const fullPath = path.join(__dirname, 'uploads', room.generatedImageUrl);
-                if (fs.existsSync(fullPath)) fs.unlinkSync(fullPath);
+                const fullPath = getUploadFilePath(room.generatedImageUrl);
+                if (fullPath && fs.existsSync(fullPath)) fs.unlinkSync(fullPath);
             }
         }
 
