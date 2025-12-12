@@ -45,6 +45,7 @@ ROOM-BY-ROOM GUIDELINES
   - Simple nightstands or floating shelves with lamps and small decor.
   - Optionally a bench, accent chair, or small loveseat at the foot of the bed or by a wall.
   - Modern art above the headboard; keep the room airy and uncluttered.
+  - important: make sure all of the walls that are visible in the original image are still visible from this perspective
 
 - Kitchens / dining:
   - Keep all cabinets, appliances, counters, and fixtures exactly as-is.

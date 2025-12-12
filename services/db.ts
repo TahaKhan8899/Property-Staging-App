@@ -71,30 +71,34 @@ export const updateSessionName = async (id: string, name: string) => {
 
 // --- Rooms ---
 
+// Helper to correct URLs
+const getFullUrl = (path: string) => {
+  if (!path) return undefined;
+  if (path.startsWith('http')) return path;
+  if (path.startsWith('data:')) return path;
+  return `http://localhost:3001${path}`;
+};
+
 export const getRoomsForSession = async (sessionId: string): Promise<RoomData[]> => {
   const rooms = await api.get(`/sessions/${sessionId}/rooms`);
 
   return rooms.map((r: any) => ({
     ...r,
-    // Construct full URL if server returns a relative path (it returns /uploads/filename.png now)
-    // We can assume server returns a usable path, or we prepend host.
-    // The server currently returns `/uploads/filename.png` in `filePath`.
-    previewUrl: r.filePath ? `http://localhost:3001${r.filePath}` : '',
-    // We don't restore the original File object because we can't easily from a URL.
-    // The RoomData type might expect `file?: File`. We should make it optional or just null.
-    // For now, let's leave it undefined, assuming the UI uses previewUrl primarily.
+    previewUrl: getFullUrl(r.filePath),
+    generatedImageUrl: getFullUrl(r.generatedImageUrl)
   }));
 };
 
-export const addRoomToSession = async (sessionId: string, file: File) => {
+export const addRoomToSession = async (sessionId: string, file: File, roomType: RoomType = RoomType.Bedroom) => {
   const id = crypto.randomUUID();
 
   const formData = new FormData();
   formData.append('id', id);
   formData.append('sessionId', sessionId);
-  formData.append('file', file); // Multer expects 'file'
-  formData.append('roomType', RoomType.Bedroom);
+  formData.append('file', file);
+  formData.append('roomType', roomType);
   formData.append('customLabel', '');
+  // Default values for new room
   formData.append('isGeneratingPrompt', 'false');
   formData.append('isPromptApproved', 'false');
   formData.append('isGeneratingImage', 'false');
@@ -107,10 +111,17 @@ export const addRoomToSession = async (sessionId: string, file: File) => {
 };
 
 export const updateRoom = async (id: string, updates: Partial<RoomData>) => {
-  // Filter out non-serializable or transient fields if necessary
   const { file, previewUrl, ...safeUpdates } = updates as any;
-
   await api.patch(`/rooms/${id}`, safeUpdates);
+};
+
+export const saveGeneratedImage = async (id: string, imageBase64: string): Promise<{ url: string }> => {
+  // Use post to custom endpoint
+  const res = await api.post(`/rooms/${id}/generated`, { imageBase64 });
+  // res should return { success: true, url: '/uploads/...' }
+  // We prepend localhost for frontend usage if needed, or let getFullUrl handle it on refresh.
+  // But here we return the full URL so state updates immediately.
+  return { url: getFullUrl(res.url) || res.url };
 };
 
 export const deleteRoom = async (id: string) => {

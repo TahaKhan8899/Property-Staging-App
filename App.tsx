@@ -112,17 +112,33 @@ function App() {
     }
   };
 
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && currentSessionId) {
-      const files = Array.from(e.target.files);
-      // Ideally show loading state here
-      for (const file of files) {
-        await addRoomToSession(currentSessionId, file);
-      }
-      await loadRooms(); // Refresh rooms
-      await loadSessions(); // Update lastModified order
+  // --- Upload Handlers ---
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [pendingRoomType, setPendingRoomType] = useState<RoomType | null>(null);
+
+  const handleAddRoomClick = (type: RoomType) => {
+    setPendingRoomType(type);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = ''; // Reset
+      fileInputRef.current.click();
     }
-    e.target.value = '';
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0] && currentSessionId && pendingRoomType) {
+      const file = e.target.files[0];
+      setLoadingRooms(true);
+      try {
+        await addRoomToSession(currentSessionId, file, pendingRoomType);
+        await loadRooms();
+        await loadSessions();
+      } catch (err) {
+        alert("Failed to upload room: " + err);
+      } finally {
+        setLoadingRooms(false);
+        setPendingRoomType(null);
+      }
+    }
   };
 
   const updateRoom = useCallback(async (id: string, updates: Partial<RoomData>) => {
@@ -175,8 +191,8 @@ function App() {
               key={session.id}
               onClick={() => setCurrentSessionId(session.id)}
               className={`group flex items-center justify-between px-3 py-2 rounded-md text-sm cursor-pointer transition-colors ${currentSessionId === session.id
-                  ? 'bg-indigo-50 text-indigo-700 font-medium'
-                  : 'text-gray-600 hover:bg-gray-100'
+                ? 'bg-indigo-50 text-indigo-700 font-medium'
+                : 'text-gray-600 hover:bg-gray-100'
                 }`}
             >
               <div className="truncate max-w-[140px]">
@@ -216,7 +232,7 @@ function App() {
 
             {/* Unit Setup */}
             <section className="bg-white rounded-xl p-6 shadow-sm border border-gray-200">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-start">
                 <div>
                   <label htmlFor="unitName" className="block text-sm font-medium text-gray-700 mb-2">Unit / Session Name</label>
                   <input
@@ -225,38 +241,43 @@ function App() {
                     value={currentSession?.name || ''}
                     onChange={handleSessionNameChange}
                     placeholder="e.g. Unit B4 - WH Property"
-                    className="w-full rounded-md border-gray-600 bg-gray-700 text-white placeholder-gray-400 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm p-2 border"
+                    className="w-full rounded-md border-gray-300 bg-white text-gray-900 placeholder-gray-400 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm p-3 border"
                   />
+                  <p className="text-xs text-gray-500 mt-2">
+                    Files will be stored in <span className="font-mono bg-gray-100 px-1 rounded">uploads/{currentSession?.name || '...'}</span>
+                  </p>
                 </div>
 
-                <div className="flex flex-col justify-end">
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Upload Room Images</label>
-                  <div className="flex items-center justify-center w-full">
-                    <label htmlFor="dropzone-file" className="flex flex-col items-center justify-center w-full h-32 border-2 border-gray-300 border-dashed rounded-lg cursor-pointer bg-gray-50 hover:bg-gray-100 transition-colors">
-                      {loadingRooms ? (
-                        <div className="flex items-center justify-center">
-                          <svg className="animate-spin h-6 w-6 text-indigo-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                        </div>
-                      ) : (
-                        <div className="flex flex-col items-center justify-center pt-5 pb-6">
-                          <svg className="w-8 h-8 mb-3 text-gray-400" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 20 16">
-                            <path stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 13h3a3 3 0 0 0 0-6h-.025A5.56 5.56 0 0 0 16 6.5 5.5 5.5 0 0 0 5.207 5.021C5.137 5.017 5.071 5 5 5a4 4 0 0 0 0 8h2.167M10 15V6m0 0L8 8m2-2 2 2" />
-                          </svg>
-                          <p className="text-sm text-gray-500"><span className="font-semibold">Click to upload</span> or drag and drop</p>
-                          <p className="text-xs text-gray-500">JPG, PNG</p>
-                        </div>
-                      )}
-                      <input
-                        id="dropzone-file"
-                        type="file"
-                        className="hidden"
-                        multiple
-                        accept="image/*"
-                        onChange={handleFileUpload}
-                        disabled={!currentSessionId || loadingRooms}
-                      />
-                    </label>
-                  </div>
+                <div className="flex flex-col">
+                  <span className="block text-sm font-medium text-gray-700 mb-3">Add Rooms</span>
+
+                  {loadingRooms ? (
+                    <div className="flex items-center justify-center h-20 bg-gray-50 rounded-lg border border-dashed border-gray-200">
+                      <svg className="animate-spin h-5 w-5 text-indigo-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                      <span className="ml-2 text-sm text-gray-500">Uploading...</span>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-2 gap-3">
+                      {Object.values(RoomType).map((type) => (
+                        <button
+                          key={type}
+                          onClick={() => handleAddRoomClick(type)}
+                          className="flex items-center justify-center gap-2 px-4 py-3 bg-white border border-gray-200 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 hover:border-indigo-300 hover:text-indigo-600 transition-all shadow-sm group"
+                        >
+                          <svg className="w-4 h-4 text-gray-400 group-hover:text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" /></svg>
+                          {type}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    className="hidden"
+                    accept="image/*"
+                    onChange={handleFileChange}
+                  />
                 </div>
               </div>
             </section>

@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { RoomData, RoomType } from '../types';
 import { generateStagingPrompt, generateStagedImage } from '../services/geminiService';
+import { saveGeneratedImage } from '../services/db';
 
 interface RoomCardProps {
   room: RoomData;
@@ -63,9 +64,10 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, onUpdate, onRemove }) => {
 
     onUpdate(room.id, { isGeneratingImage: true, error: undefined });
     try {
-      const imageUrl = await generateStagedImage(room.file || room.previewUrl, room.generatedPrompt);
+      const imageBase64 = await generateStagedImage(room.file || room.previewUrl, room.generatedPrompt);
+      const { url } = await saveGeneratedImage(room.id, imageBase64);
       onUpdate(room.id, {
-        generatedImageUrl: imageUrl,
+        generatedImageUrl: url,
         isGeneratingImage: false
       });
     } catch (err) {
