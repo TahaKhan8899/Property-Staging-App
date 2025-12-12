@@ -272,8 +272,8 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, onUpdate, onRemove }) => {
         <button
           onClick={handleDeleteClick}
           className={`text-sm font-medium transition-colors px-3 py-1 rounded ${showDeleteConfirm
-              ? 'bg-red-500 text-white hover:bg-red-600'
-              : 'text-gray-400 hover:text-red-500'
+            ? 'bg-red-500 text-white hover:bg-red-600'
+            : 'text-gray-400 hover:text-red-500'
             }`}
           title={showDeleteConfirm ? 'Click again to confirm deletion' : 'Remove Room'}
         >
@@ -571,8 +571,7 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, onUpdate, onRemove }) => {
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
             </svg>
-            {/* Show Timer equivalent, but mostly status now */}
-            Thinking & Rendering...
+            {progressThought || 'Thinking & Rendering...'}
           </button>
         )}
 

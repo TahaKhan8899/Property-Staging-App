@@ -49,6 +49,36 @@ export const getApiKey = (): string | undefined => {
   return process.env.API_KEY;
 };
 
+// Retry utility with exponential backoff for handling 503 errors
+async function retryWithBackoff<T>(
+  fn: () => Promise<T>,
+  maxRetries: number = 3,
+  initialDelay: number = 1000
+): Promise<T> {
+  let lastError: Error;
+
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (error: any) {
+      lastError = error;
+
+      // Only retry on 503 errors (service overloaded/unavailable)
+      const errorStr = error?.message || String(error);
+      if (errorStr.includes('503') || errorStr.includes('UNAVAILABLE')) {
+        const delay = initialDelay * Math.pow(2, attempt);
+        console.log(`Attempt ${attempt + 1} failed with 503. Retrying in ${delay}ms...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      } else {
+        // Don't retry other errors
+        throw error;
+      }
+    }
+  }
+
+  throw lastError!;
+}
+
 // 1. Generate Staging Prompt
 export const generateStagingPrompt = async (
   fileOrUrl: File | string,
@@ -181,112 +211,122 @@ export const generateStagedImage = async (
   prompt: string,
   onProgress?: (status: string, interimImage?: string) => void
 ): Promise<string> => {
-  // Re-instantiate for latest key
-  const apiKey = getApiKey();
-  if (!apiKey) throw new Error("API Key not found. Please select or enter a valid API key.");
+  // Wrap the entire image generation in retry logic
+  return retryWithBackoff(async () => {
+    // Re-instantiate for latest key
+    const apiKey = getApiKey();
+    if (!apiKey) throw new Error("API Key not found. Please select or enter a valid API key.");
 
-  const ai = new GoogleGenAI({ apiKey });
-
-  const base64Data = await fileToGenerativePart(originalFileOrUrl);
-
-  let mimeType = 'image/jpeg';
-  if (typeof originalFileOrUrl !== 'string') {
-    mimeType = originalFileOrUrl.type;
-  } else {
-    if (originalFileOrUrl.toLowerCase().endsWith('.png')) mimeType = 'image/png';
-  }
-
-  try {
-    const responseStream = await ai.models.generateContentStream({
-      model: MODEL_IMAGE_GENERATION,
-      contents: {
-        parts: [
-          {
-            inlineData: {
-              mimeType: mimeType,
-              data: base64Data
-            }
-          },
-          { text: `${prompt}` }
-        ]
-      },
-      config: {
-        imageConfig: {
-          imageSize: IMAGE_RESOLUTION,
-          aspectRatio: IMAGE_ASPECT_RATIO
-        }
+    const ai = new GoogleGenAI({
+      apiKey,
+      httpOptions: {
+        timeout: 5 * 60 * 1000 // 5 minutes timeout for 4K image generation
       }
     });
 
-    let finalImageBase64: string | null = null;
+    const base64Data = await fileToGenerativePart(originalFileOrUrl);
 
-    for await (const chunk of responseStream) {
-      const candidates = chunk.candidates;
-      if (candidates && candidates.length > 0) {
-        for (const part of candidates[0].content.parts) {
-          // Check for Text (Thoughts)
-          // The SDK/API returns thoughts as text parts with a 'thought' property being true,
-          // but the SDK typing might not strictly expose 'thought' on Part yet depending on version.
-          // Based on docs: "if (part.thought)"
-          if ((part as any).thought) {
-            if (part.text && onProgress) {
-              onProgress(part.text, undefined);
-            }
-            // Check for Interim Images (InlineData inside thought)
-            if (part.inlineData && part.inlineData.data && onProgress) {
-              const mime = part.inlineData.mimeType || 'image/png';
-              const rawBase64 = `data:${mime};base64,${part.inlineData.data}`;
-              onProgress(part.text || "Generating preview...", rawBase64);
-            }
+    let mimeType = 'image/jpeg';
+    if (typeof originalFileOrUrl !== 'string') {
+      mimeType = originalFileOrUrl.type;
+    } else {
+      if (originalFileOrUrl.toLowerCase().endsWith('.png')) mimeType = 'image/png';
+    }
+
+    try {
+      const responseStream = await ai.models.generateContentStream({
+        model: MODEL_IMAGE_GENERATION,
+        contents: {
+          parts: [
+            {
+              inlineData: {
+                mimeType: mimeType,
+                data: base64Data
+              }
+            },
+            { text: `${prompt}` }
+          ]
+        },
+        config: {
+          imageConfig: {
+            imageSize: IMAGE_RESOLUTION,
+            aspectRatio: IMAGE_ASPECT_RATIO
           }
-          // Check for Final Image (InlineData NOT marked as thought, or just the last image)
-          // The docs say: "The last image within Thinking is also the final rendered image."
-          // But usually the final response part contains the result.
-          // We will look for inlineData.
+        }
+      });
 
-          if (part.inlineData && part.inlineData.data) {
-            // We'll treat every image as potentially final or interim.
-            // If it's a thought, we streamed it. 
-            // If it's NOT a thought, it's likely the final one.
-            if (!(part as any).thought) {
-              const mime = part.inlineData.mimeType || 'image/png';
-              finalImageBase64 = `data:${mime};base64,${part.inlineData.data}`;
+      let finalImageBase64: string | null = null;
+
+      for await (const chunk of responseStream) {
+        const candidates = chunk.candidates;
+        if (candidates && candidates.length > 0) {
+          for (const part of candidates[0].content.parts) {
+            // Check for Text (Thoughts)
+            // The SDK/API returns thoughts as text parts with a 'thought' property being true,
+            // but the SDK typing might not strictly expose 'thought' on Part yet depending on version.
+            // Based on docs: "if (part.thought)"
+            if ((part as any).thought) {
+              if (part.text && onProgress) {
+                onProgress(part.text, undefined);
+              }
+              // Check for Interim Images (InlineData inside thought)
+              if (part.inlineData && part.inlineData.data && onProgress) {
+                const mime = part.inlineData.mimeType || 'image/png';
+                const rawBase64 = `data:${mime};base64,${part.inlineData.data}`;
+                onProgress(part.text || "Generating preview...", rawBase64);
+              }
+            }
+            // Check for Final Image (InlineData NOT marked as thought, or just the last image)
+            // The docs say: "The last image within Thinking is also the final rendered image."
+            // But usually the final response part contains the result.
+            // We will look for inlineData.
+
+            if (part.inlineData && part.inlineData.data) {
+              // We'll treat every image as potentially final or interim.
+              // If it's a thought, we streamed it. 
+              // If it's NOT a thought, it's likely the final one.
+              if (!(part as any).thought) {
+                const mime = part.inlineData.mimeType || 'image/png';
+                finalImageBase64 = `data:${mime};base64,${part.inlineData.data}`;
+              }
             }
           }
         }
       }
-    }
 
-    if (finalImageBase64) {
-      // Convert to JPG client-side
-      return await new Promise((resolve, reject) => {
-        const img = new Image();
-        img.onload = () => {
-          const canvas = document.createElement('canvas');
-          canvas.width = img.width;
-          canvas.height = img.height;
-          const ctx = canvas.getContext('2d');
-          if (!ctx) {
-            reject(new Error('Failed to get canvas context'));
-            return;
-          }
-          // Draw white background in case of transparency
-          ctx.fillStyle = '#FFFFFF';
-          ctx.fillRect(0, 0, canvas.width, canvas.height);
-          ctx.drawImage(img, 0, 0);
-          const jpgDataUrl = canvas.toDataURL('image/jpeg', 0.9); // 90% quality
-          resolve(jpgDataUrl);
-        };
-        img.onerror = (err) => reject(new Error('Failed to load generated image for conversion'));
-        img.src = finalImageBase64!;
-      });
-    }
+      if (finalImageBase64) {
+        // Convert to JPG client-side
+        return await new Promise((resolve, reject) => {
+          const img = new Image();
+          img.onload = () => {
+            const canvas = document.createElement('canvas');
+            canvas.width = img.width;
+            canvas.height = img.height;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) {
+              reject(new Error('Failed to get canvas context'));
+              return;
+            }
+            // Draw white background in case of transparency
+            ctx.fillStyle = '#FFFFFF';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(img, 0, 0);
+            const jpgDataUrl = canvas.toDataURL('image/jpeg', 0.9); // 90% quality
+            resolve(jpgDataUrl);
+          };
+          img.onerror = (err) => reject(new Error('Failed to load generated image for conversion'));
+          img.src = finalImageBase64!;
+        });
+      }
 
-    throw new Error("No image data returned from model.");
-  } catch (error) {
-    console.error("Error generating staged image:", error);
-    throw new Error("Failed to generate staged image. Ensure you are using a paid API key for high-quality generation.");
-  }
+      throw new Error("No image data returned from model.");
+    } catch (error) {
+      console.error("Error generating staged image:", error);
+      // Provide more detailed error information
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      throw new Error(`Failed to generate staged image: ${errorMessage}`);
+    }
+  }, 3, 2000); // 3 retries, starting with 2 second delay
 };
 
 // 3. Edit Generated Image
@@ -295,16 +335,23 @@ export const editGeneratedImage = async (
   editInstructions: string,
   onProgress?: (status: string, interimImage?: string) => void
 ): Promise<string> => {
-  const apiKey = getApiKey();
-  if (!apiKey) throw new Error("API Key not found. Please select or enter a valid API key.");
+  // Wrap the entire image editing in retry logic
+  return retryWithBackoff(async () => {
+    const apiKey = getApiKey();
+    if (!apiKey) throw new Error("API Key not found. Please select or enter a valid API key.");
 
-  const ai = new GoogleGenAI({ apiKey });
+    const ai = new GoogleGenAI({
+      apiKey,
+      httpOptions: {
+        timeout: 5 * 60 * 1000 // 5 minutes timeout for 4K image editing
+      }
+    });
 
-  // Convert the generated image URL to base64
-  const base64Data = await fileToGenerativePart(generatedImageUrl);
+    // Convert the generated image URL to base64
+    const base64Data = await fileToGenerativePart(generatedImageUrl);
 
-  // Construct the edit prompt using the template
-  const editPrompt = `Generate this exact same image, but make the following specific edits only:
+    // Construct the edit prompt using the template
+    const editPrompt = `Generate this exact same image, but make the following specific edits only:
 
 ${editInstructions}
 
@@ -326,86 +373,87 @@ Color palette and overall composition
 
 Do not add any new objects unless explicitly listed above, and do not modify architecture or change the scene in any other way.`;
 
-  try {
-    const responseStream = await ai.models.generateContentStream({
-      model: MODEL_IMAGE_GENERATION,
-      contents: {
-        parts: [
-          {
-            inlineData: {
-              mimeType: 'image/jpeg',
-              data: base64Data
-            }
-          },
-          { text: editPrompt }
-        ]
-      },
-      config: {
-        imageConfig: {
-          imageSize: IMAGE_RESOLUTION,
-          aspectRatio: IMAGE_ASPECT_RATIO
-        }
-      }
-    });
-
-    let finalImageBase64: string | null = null;
-
-    for await (const chunk of responseStream) {
-      const candidates = chunk.candidates;
-      if (candidates && candidates.length > 0) {
-        for (const part of candidates[0].content.parts) {
-          // Check for Text (Thoughts)
-          if ((part as any).thought) {
-            if (part.text && onProgress) {
-              onProgress(part.text, undefined);
-            }
-            // Check for Interim Images
-            if (part.inlineData && part.inlineData.data && onProgress) {
-              const mime = part.inlineData.mimeType || 'image/png';
-              const rawBase64 = `data:${mime};base64,${part.inlineData.data}`;
-              onProgress(part.text || "Editing image...", rawBase64);
-            }
-          }
-
-          // Check for Final Image
-          if (part.inlineData && part.inlineData.data) {
-            if (!(part as any).thought) {
-              const mime = part.inlineData.mimeType || 'image/png';
-              finalImageBase64 = `data:${mime};base64,${part.inlineData.data}`;
-            }
+    try {
+      const responseStream = await ai.models.generateContentStream({
+        model: MODEL_IMAGE_GENERATION,
+        contents: {
+          parts: [
+            {
+              inlineData: {
+                mimeType: 'image/jpeg',
+                data: base64Data
+              }
+            },
+            { text: editPrompt }
+          ]
+        },
+        config: {
+          imageConfig: {
+            imageSize: IMAGE_RESOLUTION,
+            aspectRatio: IMAGE_ASPECT_RATIO
           }
         }
-      }
-    }
-
-    if (finalImageBase64) {
-      // Convert to JPG client-side
-      return await new Promise((resolve, reject) => {
-        const img = new Image();
-        img.onload = () => {
-          const canvas = document.createElement('canvas');
-          canvas.width = img.width;
-          canvas.height = img.height;
-          const ctx = canvas.getContext('2d');
-          if (!ctx) {
-            reject(new Error('Failed to get canvas context'));
-            return;
-          }
-          // Draw white background in case of transparency
-          ctx.fillStyle = '#FFFFFF';
-          ctx.fillRect(0, 0, canvas.width, canvas.height);
-          ctx.drawImage(img, 0, 0);
-          const jpgDataUrl = canvas.toDataURL('image/jpeg', 0.9); // 90% quality
-          resolve(jpgDataUrl);
-        };
-        img.onerror = (err) => reject(new Error('Failed to load edited image for conversion'));
-        img.src = finalImageBase64!;
       });
-    }
 
-    throw new Error("No image data returned from model.");
-  } catch (error) {
-    console.error("Error editing image:", error);
-    throw new Error("Failed to edit image. Please try again.");
-  }
+      let finalImageBase64: string | null = null;
+
+      for await (const chunk of responseStream) {
+        const candidates = chunk.candidates;
+        if (candidates && candidates.length > 0) {
+          for (const part of candidates[0].content.parts) {
+            // Check for Text (Thoughts)
+            if ((part as any).thought) {
+              if (part.text && onProgress) {
+                onProgress(part.text, undefined);
+              }
+              // Check for Interim Images
+              if (part.inlineData && part.inlineData.data && onProgress) {
+                const mime = part.inlineData.mimeType || 'image/png';
+                const rawBase64 = `data:${mime};base64,${part.inlineData.data}`;
+                onProgress(part.text || "Editing image...", rawBase64);
+              }
+            }
+
+            // Check for Final Image
+            if (part.inlineData && part.inlineData.data) {
+              if (!(part as any).thought) {
+                const mime = part.inlineData.mimeType || 'image/png';
+                finalImageBase64 = `data:${mime};base64,${part.inlineData.data}`;
+              }
+            }
+          }
+        }
+      }
+
+      if (finalImageBase64) {
+        // Convert to JPG client-side
+        return await new Promise((resolve, reject) => {
+          const img = new Image();
+          img.onload = () => {
+            const canvas = document.createElement('canvas');
+            canvas.width = img.width;
+            canvas.height = img.height;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) {
+              reject(new Error('Failed to get canvas context'));
+              return;
+            }
+            // Draw white background in case of transparency
+            ctx.fillStyle = '#FFFFFF';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(img, 0, 0);
+            const jpgDataUrl = canvas.toDataURL('image/jpeg', 0.9); // 90% quality
+            resolve(jpgDataUrl);
+          };
+          img.onerror = (err) => reject(new Error('Failed to load edited image for conversion'));
+          img.src = finalImageBase64!;
+        });
+      }
+
+      throw new Error("No image data returned from model.");
+    } catch (error) {
+      console.error("Error editing image:", error);
+      throw new Error("Failed to edit image. Please try again.");
+    }
+  }, 3, 2000); // 3 retries, starting with 2 second delay
 };
