@@ -102,12 +102,66 @@ app.patch('/api/sessions/:id', (req, res) => {
         if (name && name !== currentSession.name) {
             const oldPath = getSessionFolderPath(currentSession.name);
             const newPath = getSessionFolderPath(name);
+            const oldSanitizedName = sanitizeName(currentSession.name);
+            const newSanitizedName = sanitizeName(name);
 
             // If old path exists, try to rename
             if (fs.existsSync(oldPath)) {
                 if (!fs.existsSync(newPath)) {
                     // Simple Rename
                     fs.renameSync(oldPath, newPath);
+
+                    // Update database paths for all rooms and image versions
+                    // Update rooms table - filePath and generatedImageUrl
+                    const roomsToUpdate = db.prepare('SELECT id, filePath, generatedImageUrl FROM rooms WHERE sessionId = ?').all(id);
+                    const updateRoomStmt = db.prepare('UPDATE rooms SET filePath = ?, generatedImageUrl = ? WHERE id = ?');
+
+                    roomsToUpdate.forEach(room => {
+                        let newFilePath = room.filePath;
+                        let newGeneratedImageUrl = room.generatedImageUrl;
+
+                        // Update filePath - handle both relative paths and full URLs
+                        if (room.filePath) {
+                            if (room.filePath.startsWith(oldSanitizedName + '/')) {
+                                // Relative path: "BTR-B1/original/..."
+                                newFilePath = room.filePath.replace(oldSanitizedName + '/', newSanitizedName + '/');
+                            } else if (room.filePath.includes(`/uploads/${oldSanitizedName}/`)) {
+                                // Full URL: "http://localhost:3001/uploads/BTR-B1/..."
+                                newFilePath = room.filePath.replace(`/uploads/${oldSanitizedName}/`, `/uploads/${newSanitizedName}/`);
+                            }
+                        }
+
+                        // Update generatedImageUrl - handle both relative paths and full URLs
+                        if (room.generatedImageUrl) {
+                            if (room.generatedImageUrl.startsWith(oldSanitizedName + '/')) {
+                                // Relative path: "BTR-B1/staged/..."
+                                newGeneratedImageUrl = room.generatedImageUrl.replace(oldSanitizedName + '/', newSanitizedName + '/');
+                            } else if (room.generatedImageUrl.includes(`/uploads/${oldSanitizedName}/`)) {
+                                // Full URL: "http://localhost:3001/uploads/BTR-B1/..."
+                                newGeneratedImageUrl = room.generatedImageUrl.replace(`/uploads/${oldSanitizedName}/`, `/uploads/${newSanitizedName}/`);
+                            }
+                        }
+
+                        updateRoomStmt.run(newFilePath, newGeneratedImageUrl, room.id);
+                    });
+
+                    // Update image_versions table - url
+                    const versionsToUpdate = db.prepare('SELECT id, url FROM image_versions WHERE roomId IN (SELECT id FROM rooms WHERE sessionId = ?)').all(id);
+                    const updateVersionStmt = db.prepare('UPDATE image_versions SET url = ? WHERE id = ?');
+
+                    versionsToUpdate.forEach(version => {
+                        if (version.url) {
+                            let newUrl = version.url;
+                            if (version.url.startsWith(oldSanitizedName + '/')) {
+                                // Relative path: "BTR-B1/staged/..."
+                                newUrl = version.url.replace(oldSanitizedName + '/', newSanitizedName + '/');
+                            } else if (version.url.includes(`/uploads/${oldSanitizedName}/`)) {
+                                // Full URL: "http://localhost:3001/uploads/BTR-B1/..."
+                                newUrl = version.url.replace(`/uploads/${oldSanitizedName}/`, `/uploads/${newSanitizedName}/`);
+                            }
+                            updateVersionStmt.run(newUrl, version.id);
+                        }
+                    });
                 } else {
                     // Collision or Target exists. 
                     // Strategy: Merge? Or just ignore moving?
