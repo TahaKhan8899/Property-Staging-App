@@ -15,6 +15,7 @@ export interface RoomData {
   customLabel: string;
 
   // Prompt State
+  initialThoughts?: string; // User's initial ideas before generation
   initialPrompt?: string; // Stores the original AI output for reset functionality
   generatedPrompt: string;
   isGeneratingPrompt: boolean;

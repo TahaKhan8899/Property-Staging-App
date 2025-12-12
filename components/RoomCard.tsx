@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { RoomData, RoomType } from '../types';
-import { generateStagingPrompt, generateStagedImage } from '../services/geminiService';
+import { generateStagingPrompt, generateStagedImage, refinePrompt } from '../services/geminiService';
 import { saveGeneratedImage } from '../services/db';
 
 interface RoomCardProps {
@@ -13,6 +13,8 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, onUpdate, onRemove }) => {
   const [promptText, setPromptText] = useState(room.generatedPrompt);
   const [progressThought, setProgressThought] = useState<string>('');
   const [interimImageUrl, setInterimImageUrl] = useState<string | undefined>(undefined);
+  const [isRefining, setIsRefining] = useState(false);
+  const [refineText, setRefineText] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // Sync local state if parent updates
@@ -31,7 +33,14 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, onUpdate, onRemove }) => {
   const handleGeneratePrompt = async () => {
     onUpdate(room.id, { isGeneratingPrompt: true, error: undefined });
     try {
-      const prompt = await generateStagingPrompt(room.file || room.previewUrl, room.roomType, room.customLabel);
+      let prompt = await generateStagingPrompt(
+        room.file || room.previewUrl,
+        room.roomType,
+        room.customLabel,
+        room.initialThoughts
+      );
+      // Strip opening and closing quotes if present
+      prompt = prompt.replace(/^["']|["']$/g, '').trim();
       onUpdate(room.id, {
         generatedPrompt: prompt,
         initialPrompt: prompt, // Save original for reset
@@ -51,6 +60,24 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, onUpdate, onRemove }) => {
       generatedPrompt: promptText, // Save manual edits
       isPromptApproved: true
     });
+  };
+
+
+
+  const handleRefinePrompt = async () => {
+    if (!refineText.trim() || isRefining) return;
+
+    setIsRefining(true);
+    try {
+      const newPrompt = await refinePrompt(promptText, refineText);
+      setPromptText(newPrompt);
+      setRefineText(''); // Clear input after success
+      onUpdate(room.id, { generatedPrompt: newPrompt });
+    } catch (err) {
+      onUpdate(room.id, { error: (err as Error).message });
+    } finally {
+      setIsRefining(false);
+    }
   };
 
   const handleResetPrompt = () => {
@@ -95,18 +122,8 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, onUpdate, onRemove }) => {
 
   const handleDownload = () => {
     if (!room.generatedImageUrl) return;
-    const link = document.createElement('a');
-    link.href = room.generatedImageUrl;
-    // Determine extension from data URL if possible
-    let extension = 'png';
-    const mimeMatch = room.generatedImageUrl.match(/^data:image\/(\w+);/);
-    if (mimeMatch) {
-      extension = mimeMatch[1] === 'jpeg' ? 'jpg' : mimeMatch[1];
-    }
-    link.download = `staged-${room.roomType.replace(/\s+/g, '-').toLowerCase()}-${Date.now()}.${extension}`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    // Open image in new tab instead of downloading
+    window.open(room.generatedImageUrl, '_blank');
   };
 
   return (
@@ -225,6 +242,35 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, onUpdate, onRemove }) => {
                   </div>
                 )}
               </div>
+
+              {/* Prompt Refinement Input (Visible when prompt exists but not generating image) */}
+              {room.generatedPrompt && !room.isGeneratingImage && !room.isPromptApproved && (
+                <div className="mt-2 flex gap-2">
+                  <input
+                    type="text"
+                    value={refineText}
+                    onChange={(e) => setRefineText(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleRefinePrompt()}
+                    disabled={isRefining}
+                    placeholder="Refine prompt (e.g. 'Make the sofa blue', 'Add a plant')"
+                    className="flex-1 rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border"
+                  />
+                  <button
+                    onClick={handleRefinePrompt}
+                    disabled={isRefining || !refineText.trim()}
+                    className="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50"
+                  >
+                    {isRefining ? (
+                      <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                      </svg>
+                    ) : (
+                      <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+                    )}
+                  </button>
+                </div>
+              )}
             </>
           )}
         </div>
@@ -241,12 +287,20 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, onUpdate, onRemove }) => {
 
         {/* State 1: No Prompt Generated Yet */}
         {!room.generatedPrompt && !room.isGeneratingPrompt && (
-          <button
-            onClick={handleGeneratePrompt}
-            className="px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-md hover:bg-indigo-700 shadow-sm"
-          >
-            Generate Prompt
-          </button>
+          <div className="flex flex-col gap-2 w-full sm:w-auto items-end">
+            <textarea
+              placeholder="Initial thoughts (e.g. 'Use a mid-century style', 'Include a coffee maker')..."
+              value={room.initialThoughts || ''}
+              onChange={(e) => onUpdate(room.id, { initialThoughts: e.target.value })}
+              className="w-full sm:w-80 text-sm border-gray-300 rounded-md focus:ring-indigo-500 focus:border-indigo-500 border p-2 h-20 resize-none"
+            />
+            <button
+              onClick={handleGeneratePrompt}
+              className="px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-md hover:bg-indigo-700 shadow-sm self-end"
+            >
+              Generate Prompt
+            </button>
+          </div>
         )}
 
         {/* State 2: Prompt Generated, Not Approved */}

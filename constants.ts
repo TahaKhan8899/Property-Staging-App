@@ -38,19 +38,22 @@ ROOM-BY-ROOM GUIDELINES
   - Place floor or table lamps for warmth and realism.
   - Use wall art above sofas or fireplaces (modern abstract prints).
   - Add plants in corners or near windows, without blocking views.
+  - prefer curtains on windows where it makes sense
 
 - Bedrooms:
   - Modern platform or upholstered bed with neutral bedding and a throw at the foot.
   - 2–4 pillows including some with accent colors or patterns.
   - Simple nightstands or floating shelves with lamps and small decor.
   - Optionally a bench, accent chair, or small loveseat at the foot of the bed or by a wall.
-  - Modern art above the headboard; keep the room airy and uncluttered.
+  - Modern art above the headboard or anywhere else that makes sense; keep the room airy and uncluttered.
+  - prefer curtains on windows where it makes sense
   - important: make sure all of the walls that are visible in the original image are still visible from this perspective
 
 - Kitchens / dining:
   - Keep all cabinets, appliances, counters, and fixtures exactly as-is.
   - Add a compact dining table with 2–4 modern chairs if space allows.
   - Style counters lightly: cutting board, fruit bowl, plant, coffee maker, or a few tidy kitchen items.
+  - Prefer stainless steel espresso machines and toasters on countertops where it makes sense
 
 - Bathrooms:
   - No moving plumbing, tub, tiles, or fixtures.
@@ -60,6 +63,10 @@ ROOM-BY-ROOM GUIDELINES
   - Ensure that anything reflecting off a mirror is accurately reflected (ie. it logically and physically exists)
   - Prefer keeping countertops clean, minimal, except a few soft elements
   - Examples of soft elements: shower curtain, folded hand towels, small plants, ceramic toothbrush holder with neutral colored toothbrushes and minimal bath accessories on ledges or counters.
+
+- Patios / balconies:
+  - add comfy furniture that shows you can sit out there and hang out like an actual outdoor love seat sofa with side table and coffe table
+  - add plants where it makes sense
 
 REFERENCE EXAMPLE OF AN APPROVED PROMPT
 Use the following as a reference for level of detail, structure, and tone (do not copy layout blindly, but match this style of specificity in the prompt.):
