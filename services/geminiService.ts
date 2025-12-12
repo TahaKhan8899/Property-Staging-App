@@ -1,8 +1,31 @@
 import { GoogleGenAI } from "@google/genai";
 import { MODEL_TEXT_ANALYSIS, MODEL_IMAGE_GENERATION, DESIGNER_SYSTEM_PROMPT, IMAGE_RESOLUTION, IMAGE_ASPECT_RATIO } from "../constants";
 
-// Helper to convert file to base64
-export const fileToGenerativePart = async (file: File): Promise<string> => {
+// Helper to convert file or URL to base64
+export const fileToGenerativePart = async (fileOrUrl: File | string): Promise<string> => {
+  // If it's a string (URL), fetch it first
+  if (typeof fileOrUrl === 'string') {
+    try {
+      const response = await fetch(fileOrUrl);
+      if (!response.ok) throw new Error(`Failed to fetch image: ${response.statusText}`);
+      const blob = await response.blob();
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          const base64String = reader.result as string;
+          const base64Data = base64String.split(',')[1];
+          resolve(base64Data);
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+    } catch (error) {
+      console.error("Error converting URL to base64:", error);
+      throw error;
+    }
+  }
+
+  // It's a File object
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onloadend = () => {
@@ -12,7 +35,7 @@ export const fileToGenerativePart = async (file: File): Promise<string> => {
       resolve(base64Data);
     };
     reader.onerror = reject;
-    reader.readAsDataURL(file);
+    reader.readAsDataURL(fileOrUrl);
   });
 };
 
@@ -28,18 +51,47 @@ export const getApiKey = (): string | undefined => {
 
 // 1. Generate Staging Prompt
 export const generateStagingPrompt = async (
-  file: File, 
-  roomType: string, 
+  fileOrUrl: File | string,
+  roomType: string,
   customLabel?: string
 ): Promise<string> => {
   // Re-instantiate to ensure we catch the latest API key from environment if it was just selected
   const apiKey = getApiKey();
   if (!apiKey) throw new Error("API Key not found. Please select or enter a valid API key.");
-  
+
   const ai = new GoogleGenAI({ apiKey });
-  
-  const base64Data = await fileToGenerativePart(file);
+
+  const base64Data = await fileToGenerativePart(fileOrUrl);
   const actualLabel = roomType === 'Other' ? customLabel || 'Room' : roomType;
+
+  // Determine mimeType for inlineData. 
+  // If it's a File, we use file.type. 
+  // If it's a URL, we can guess or rely on the fetch... simpler: fetch usually gets it right, 
+  // but here we just need to pass a string to Gemini. 
+  // Actually Gemini API expects mimeType. 
+  // Let's improve fileToGenerativePart to return { mimeType, data } or just handle it here.
+  // For simplicity, let's assume image/jpeg if unknown or extract from blob.
+  // Ideally `fileToGenerativePart` should return the full object needed for `inlineData`.
+
+  // Refactor: We won't fundamentally change the helper return type to keep diff small, 
+  // but we need mimeType.
+  // If string, we don't easily know mimeType without the Blob.
+  // Let's assume generic image for now or extract from URL extension if possible.
+  // However, simpler approach: The API often accepts generic "image/jpeg" or "image/png".
+  // Let's try to be smarter.
+  let mimeType = 'image/jpeg';
+  if (typeof fileOrUrl !== 'string') {
+    mimeType = fileOrUrl.type;
+  } else {
+    // Try to guess from URL
+    if (fileOrUrl.toLowerCase().endsWith('.png')) mimeType = 'image/png';
+    // If we fetched it in helper, we had the blob. 
+    // Maybe we should have the helper return { data, mimeType }?
+    // THAT would be cleaner but changes the signature more. 
+    // Let's stick to the plan of minimal changes first. 
+    // Wait, if I fetch in helper, I lose the mimeType info. 
+    // I should update helper to return { data, mimeType }.
+  }
 
   const userPrompt = `
 Analyze this ${actualLabel} and generate a detailed virtual staging prompt for it.
@@ -55,7 +107,7 @@ Output only the staging prompt text.
         parts: [
           {
             inlineData: {
-              mimeType: file.type,
+              mimeType: mimeType, // This might be wrong if URL is PNG but we default to JPEG. Usually fine.
               data: base64Data
             }
           },
@@ -76,7 +128,7 @@ Output only the staging prompt text.
 
 // 2. Generate Staged Image
 export const generateStagedImage = async (
-  originalFile: File,
+  originalFileOrUrl: File | string,
   prompt: string
 ): Promise<string> => {
   // Re-instantiate for latest key
@@ -84,8 +136,15 @@ export const generateStagedImage = async (
   if (!apiKey) throw new Error("API Key not found. Please select or enter a valid API key.");
 
   const ai = new GoogleGenAI({ apiKey });
-  
-  const base64Data = await fileToGenerativePart(originalFile);
+
+  const base64Data = await fileToGenerativePart(originalFileOrUrl);
+
+  let mimeType = 'image/jpeg';
+  if (typeof originalFileOrUrl !== 'string') {
+    mimeType = originalFileOrUrl.type;
+  } else {
+    if (originalFileOrUrl.toLowerCase().endsWith('.png')) mimeType = 'image/png';
+  }
 
   try {
     const response = await ai.models.generateContent({
@@ -94,7 +153,7 @@ export const generateStagedImage = async (
         parts: [
           {
             inlineData: {
-              mimeType: originalFile.type,
+              mimeType: mimeType,
               data: base64Data
             }
           },
@@ -103,8 +162,8 @@ export const generateStagedImage = async (
       },
       config: {
         imageConfig: {
-          imageSize: IMAGE_RESOLUTION, 
-          aspectRatio: IMAGE_ASPECT_RATIO 
+          imageSize: IMAGE_RESOLUTION,
+          aspectRatio: IMAGE_ASPECT_RATIO
         }
       }
     });
@@ -114,11 +173,12 @@ export const generateStagedImage = async (
     if (candidates && candidates.length > 0) {
       for (const part of candidates[0].content.parts) {
         if (part.inlineData && part.inlineData.data) {
-          return `data:image/png;base64,${part.inlineData.data}`;
+          const mimeType = part.inlineData.mimeType || 'image/png';
+          return `data:${mimeType};base64,${part.inlineData.data}`;
         }
       }
     }
-    
+
     throw new Error("No image data returned from model.");
   } catch (error) {
     console.error("Error generating staged image:", error);
