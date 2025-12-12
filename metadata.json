@@ -1,0 +1,5 @@
+{
+  "name": "WH Staging Assistant",
+  "description": "A specialized tool for analyzing room images and generating high-quality architectural staging renders.",
+  "requestFramePermissions": []
+}

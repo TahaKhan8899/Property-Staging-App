@@ -1,0 +1,42 @@
+export enum RoomType {
+  Bedroom = 'Bedroom',
+  LivingRoom = 'Living Room',
+  Kitchen = 'Kitchen',
+  Bathroom = 'Bathroom',
+  PatioBalcony = 'Patio / Balcony',
+  Other = 'Other',
+}
+
+export interface RoomData {
+  id: string;
+  file: File;
+  previewUrl: string;
+  roomType: RoomType;
+  customLabel: string;
+  
+  // Prompt State
+  initialPrompt?: string; // Stores the original AI output for reset functionality
+  generatedPrompt: string;
+  isGeneratingPrompt: boolean;
+  isPromptApproved: boolean;
+  
+  // Image Generation State
+  generatedImageUrl?: string;
+  isGeneratingImage: boolean;
+  error?: string;
+}
+
+export interface Session {
+  id: string;
+  name: string;
+  lastModified: number;
+  rooms: RoomData[];
+}
+
+// Augment window for AI Studio specific API key handling
+declare global {
+  interface AIStudio {
+    hasSelectedApiKey: () => Promise<boolean>;
+    openSelectKey: () => Promise<void>;
+  }
+}
