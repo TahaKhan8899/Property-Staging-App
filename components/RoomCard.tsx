@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { RoomData, RoomType, ImageVersion } from '../types';
 import { generateStagingPrompt, generateStagedImage, refinePrompt, editGeneratedImage } from '../services/geminiService';
 import { saveGeneratedImage, getImageVersions, restoreImageVersion, uploadStagedImage } from '../services/db';
+import ImageCompareModal from './ImageCompareModal';
 
 interface RoomCardProps {
   room: RoomData;
@@ -22,6 +23,7 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, onUpdate, onRemove }) => {
   const [isUploadingStaged, setIsUploadingStaged] = useState(false);
   const [isDownloadingCompressed, setIsDownloadingCompressed] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [isCompareOpen, setIsCompareOpen] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -44,6 +46,12 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, onUpdate, onRemove }) => {
       textareaRef.current.style.height = textareaRef.current.scrollHeight + 'px';
     }
   }, [promptText]);
+
+  useEffect(() => {
+    if (!room.generatedImageUrl && isCompareOpen) {
+      setIsCompareOpen(false);
+    }
+  }, [room.generatedImageUrl, isCompareOpen]);
 
   const loadVersions = async () => {
     try {
@@ -349,38 +357,49 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, onUpdate, onRemove }) => {
           {/* Staged Image View if generated */}
           {room.generatedImageUrl && !room.isEditingImage ? (
             <>
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-3 flex-wrap">
                 <span className="text-xs font-semibold text-green-600 uppercase tracking-wider flex items-center gap-1">
                   <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" /></svg>
                   Staged Render
                 </span>
-                {versions.length > 1 && (
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => handleVersionNavigation('prev')}
-                      disabled={currentVersionIndex === 0}
-                      className="p-1 rounded hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-                      title="Previous version"
-                    >
-                      <svg className="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7" />
-                      </svg>
-                    </button>
-                    <span className="text-xs font-medium text-gray-600 bg-gray-100 px-2 py-1 rounded">
-                      Version {currentVersionIndex + 1} of {versions.length}
-                    </span>
-                    <button
-                      onClick={() => handleVersionNavigation('next')}
-                      disabled={currentVersionIndex === versions.length - 1}
-                      className="p-1 rounded hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-                      title="Next version"
-                    >
-                      <svg className="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7" />
-                      </svg>
-                    </button>
-                  </div>
-                )}
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setIsCompareOpen(true)}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border border-gray-200 text-gray-600 bg-white hover:text-gray-900 hover:border-gray-300 transition-colors"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5H5v4M15 19h4v-4M5 19l4-4m6-6 4-4" />
+                    </svg>
+                    Compare
+                  </button>
+                  {versions.length > 1 && (
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => handleVersionNavigation('prev')}
+                        disabled={currentVersionIndex === 0}
+                        className="p-1 rounded hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                        title="Previous version"
+                      >
+                        <svg className="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7" />
+                        </svg>
+                      </button>
+                      <span className="text-xs font-medium text-gray-600 bg-gray-100 px-2 py-1 rounded">
+                        Version {currentVersionIndex + 1} of {versions.length}
+                      </span>
+                      <button
+                        onClick={() => handleVersionNavigation('next')}
+                        disabled={currentVersionIndex === versions.length - 1}
+                        className="p-1 rounded hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                        title="Next version"
+                      >
+                        <svg className="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7" />
+                        </svg>
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
               <div className="relative aspect-video bg-gray-900 rounded-lg overflow-hidden group">
                 <img src={room.generatedImageUrl} alt="Staged" className="w-full h-full object-cover" />
@@ -671,6 +690,14 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, onUpdate, onRemove }) => {
           </>
         )}
       </div>
+      {room.generatedImageUrl && (
+        <ImageCompareModal
+          isOpen={isCompareOpen}
+          originalUrl={room.previewUrl}
+          stagedUrl={room.generatedImageUrl}
+          onClose={() => setIsCompareOpen(false)}
+        />
+      )}
     </div>
   );
 };
