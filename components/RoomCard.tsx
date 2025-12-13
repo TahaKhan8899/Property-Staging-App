@@ -248,8 +248,7 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, onUpdate, onRemove }) => {
     } catch (err) {
       onUpdate(room.id, { error: (err as Error).message });
     } finally {
-      // Small delay to ensure download starts before removing loading state
-      setTimeout(() => setIsDownloadingCompressed(false), 1000);
+      setIsDownloadingCompressed(false);
     }
   };
 
@@ -263,8 +262,43 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, onUpdate, onRemove }) => {
     }
   };
 
+  const handleUploadTrigger = () => {
+    if (isUploadingStaged) return;
+    fileInputRef.current?.click();
+  };
+
+  const renderUploadButton = (label: string, extraClasses = '') => (
+    <button
+      onClick={handleUploadTrigger}
+      disabled={isUploadingStaged}
+      className={`px-3 py-2 text-sm font-medium rounded-md transition-colors text-gray-700 hover:bg-gray-100 disabled:opacity-50 flex items-center gap-2 ${extraClasses}`}
+    >
+      {isUploadingStaged ? (
+        <>
+          <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+          </svg>
+          Uploading...
+        </>
+      ) : (
+        <>
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg>
+          {label}
+        </>
+      )}
+    </button>
+  );
+
   return (
     <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden flex flex-col">
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        onChange={handleUploadStaged}
+        className="hidden"
+      />
       {/* Header / Toolbar */}
       <div className="bg-gray-50 px-4 py-3 border-b border-gray-100 flex justify-between items-center">
         <div className="flex items-center gap-3">
@@ -545,18 +579,22 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, onUpdate, onRemove }) => {
               onChange={(e) => onUpdate(room.id, { initialThoughts: e.target.value })}
               className="w-full sm:w-80 text-sm border-gray-300 rounded-md focus:ring-indigo-500 focus:border-indigo-500 border p-2 h-20 resize-none"
             />
-            <button
-              onClick={handleGeneratePrompt}
-              className="px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-md hover:bg-indigo-700 shadow-sm self-end"
-            >
-              Generate Prompt
-            </button>
+            <div className="flex flex-wrap gap-2 justify-end w-full sm:w-auto">
+              {renderUploadButton('Upload Photo')}
+              <button
+                onClick={handleGeneratePrompt}
+                className="px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-md hover:bg-indigo-700 shadow-sm"
+              >
+                Generate Prompt
+              </button>
+            </div>
           </div>
         )}
 
         {/* State 2: Prompt Generated, Not Approved */}
         {room.generatedPrompt && !room.isPromptApproved && !room.isGeneratingImage && (
           <>
+            {renderUploadButton('Upload Photo')}
             <button
               onClick={handleGeneratePrompt}
               className="px-3 py-2 text-gray-700 hover:bg-white hover:text-gray-900 text-sm font-medium rounded-md transition-colors border border-transparent hover:border-gray-200"
@@ -583,6 +621,7 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, onUpdate, onRemove }) => {
         {/* State 3: Prompt Approved, Ready for Image Gen */}
         {room.isPromptApproved && !room.generatedImageUrl && !room.isGeneratingImage && (
           <>
+            {renderUploadButton('Upload Photo')}
             <button
               onClick={() => onUpdate(room.id, { isPromptApproved: false })}
               className="px-3 py-2 text-sm text-gray-500 hover:text-gray-700"
@@ -613,33 +652,7 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, onUpdate, onRemove }) => {
         {/* State 5: Image Done */}
         {room.generatedImageUrl && !room.isEditingImage && (
           <>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*"
-              onChange={handleUploadStaged}
-              className="hidden"
-            />
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              disabled={isUploadingStaged}
-              className="px-3 py-2 text-sm font-medium rounded-md transition-colors text-gray-700 hover:bg-gray-100 disabled:opacity-50 flex items-center gap-2"
-            >
-              {isUploadingStaged ? (
-                <>
-                  <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                  </svg>
-                  Uploading...
-                </>
-              ) : (
-                <>
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg>
-                  Upload Staged Image
-                </>
-              )}
-            </button>
+            {renderUploadButton('Upload Staged Image')}
             <button
               onClick={() => setIsEditingMode(!isEditingMode)}
               className={`px-3 py-2 text-sm font-medium rounded-md transition-colors ${isEditingMode

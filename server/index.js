@@ -702,11 +702,12 @@ app.get('/api/rooms/:id/download-compressed', async (req, res) => {
                 .toFile(compressedPath);
         }
 
-        // Compress image on-the-fly and stream to client
-        res.setHeader('Content-Type', 'image/jpeg');
-        res.setHeader('Content-Disposition', `attachment; filename="${downloadFileName}"`);
+        // Return redirect to the compressed file so browser just opens it
+        const uploadsRoot = path.join(__dirname, 'uploads');
+        const relativeCompressedPath = path.relative(uploadsRoot, compressedPath).replace(/\\/g, '/');
+        const publicUrl = `/uploads/${relativeCompressedPath}`;
 
-        fs.createReadStream(compressedPath).pipe(res);
+        return res.redirect(publicUrl);
 
     } catch (err) {
         console.error('Compression error:', err);
