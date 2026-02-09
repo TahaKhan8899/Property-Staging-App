@@ -7,6 +7,8 @@ export enum RoomType {
   Other = 'Other',
 }
 
+export type SessionStatus = 'not_started' | 'in_progress' | 'completed';
+
 export interface ImageVersion {
   id: string;
   roomId: string;
@@ -45,6 +47,7 @@ export interface Session {
   id: string;
   name: string;
   lastModified: number;
+  status: SessionStatus;
   rooms: RoomData[];
 }
 

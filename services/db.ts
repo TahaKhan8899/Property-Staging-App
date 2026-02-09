@@ -1,4 +1,4 @@
-import { RoomData, RoomType } from '../types';
+import { RoomData, RoomType, SessionStatus } from '../types';
 
 const API_BASE = 'http://localhost:3001/api';
 
@@ -45,17 +45,19 @@ export interface SessionEntity {
   id: string;
   name: string;
   lastModified: number;
+  status: SessionStatus;
 }
 
 export const getSessions = async (): Promise<SessionEntity[]> => {
   return await api.get('/sessions');
 };
 
-export const createSession = async (name: string = 'New Session') => {
+export const createSession = async (name: string = 'New Session', status: SessionStatus = 'not_started') => {
   const id = crypto.randomUUID();
   await api.post('/sessions', {
     id,
     name,
+    status,
     lastModified: Date.now()
   });
   return id;
@@ -65,8 +67,13 @@ export const deleteSession = async (id: string) => {
   await api.delete(`/sessions/${id}`);
 };
 
+export const updateSession = async (id: string, updates: Partial<Pick<SessionEntity, 'name' | 'status'>>) => {
+  if (!updates || Object.keys(updates).length === 0) return;
+  await api.patch(`/sessions/${id}`, { ...updates, lastModified: Date.now() });
+};
+
 export const updateSessionName = async (id: string, name: string) => {
-  await api.patch(`/sessions/${id}`, { name, lastModified: Date.now() });
+  await updateSession(id, { name });
 };
 
 // --- Rooms ---

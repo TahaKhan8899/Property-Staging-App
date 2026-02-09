@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { RoomData, RoomType } from './types';
+import { RoomData, RoomType, SessionStatus } from './types';
 import RoomCard from './components/RoomCard';
 import ApiKeySelector from './components/ApiKeySelector';
 import {
@@ -7,17 +7,41 @@ import {
   createSession,
   deleteSession,
   updateSessionName,
+  updateSession,
   addRoomToSession,
   getRoomsForSession,
   updateRoom as updateRoomInDB,
   deleteRoom
 } from './services/db';
+import type { SessionEntity } from './services/db';
 
-export interface SessionEntity {
-  id: string;
-  name: string;
-  lastModified: number;
-}
+const SESSION_STATUS_META: Record<SessionStatus, { label: string; dotClass: string; activeClasses: string }> = {
+  not_started: {
+    label: 'Not started',
+    dotClass: 'bg-red-500',
+    activeClasses: 'border-red-200 bg-red-50 text-red-700'
+  },
+  in_progress: {
+    label: 'In progress',
+    dotClass: 'bg-amber-500',
+    activeClasses: 'border-amber-200 bg-amber-50 text-amber-700'
+  },
+  completed: {
+    label: 'Completed',
+    dotClass: 'bg-emerald-500',
+    activeClasses: 'border-emerald-200 bg-emerald-50 text-emerald-700'
+  }
+};
+
+const SESSION_STATUS_ORDER: SessionStatus[] = ['not_started', 'in_progress', 'completed'];
+const DEFAULT_SESSION_STATUS: SessionStatus = 'not_started';
+
+const resolveSessionStatus = (status?: SessionStatus | null) => {
+  if (status && SESSION_STATUS_META[status as SessionStatus]) {
+    return status as SessionStatus;
+  }
+  return DEFAULT_SESSION_STATUS;
+};
 
 function App() {
   // --- Data Fetching ---
@@ -26,6 +50,7 @@ function App() {
   const [rooms, setRooms] = useState<RoomData[]>([]);
   const [isApiKeyValid, setIsApiKeyValid] = useState(false);
   const [loadingRooms, setLoadingRooms] = useState(false);
+  const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
 
   // Load Sessions on Mount & Polling/Refresh
   const loadSessions = async () => {
@@ -61,6 +86,7 @@ function App() {
   }, [sessions, currentSessionId]);
 
   const currentSession = sessions?.find(s => s.id === currentSessionId);
+  const currentSessionStatus = resolveSessionStatus(currentSession?.status);
 
   // Load Rooms when session changes
   const loadRooms = useCallback(async () => {
@@ -112,9 +138,29 @@ function App() {
     }
   };
 
+  const handleSessionStatusChange = async (status: SessionStatus) => {
+    if (!currentSessionId || isUpdatingStatus) return;
+    const nextStatus = resolveSessionStatus(status);
+    if (currentSession?.status === nextStatus) return;
+
+    setSessions(prev => prev?.map(s => s.id === currentSessionId ? { ...s, status: nextStatus } : s) || []);
+
+    setIsUpdatingStatus(true);
+    try {
+      await updateSession(currentSessionId, { status: nextStatus });
+    } catch (err) {
+      console.error('Failed to update session status', err);
+      await loadSessions();
+      alert('Failed to update session status. Please try again.');
+    } finally {
+      setIsUpdatingStatus(false);
+    }
+  };
+
   // --- Upload Handlers ---
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [pendingRoomType, setPendingRoomType] = useState<RoomType | null>(null);
+  const [draggedRoomType, setDraggedRoomType] = useState<RoomType | null>(null);
 
   const handleAddRoomClick = (type: RoomType) => {
     setPendingRoomType(type);
@@ -124,20 +170,60 @@ function App() {
     }
   };
 
+  const uploadRoomImage = async (file: File, roomType: RoomType) => {
+    if (!currentSessionId) return;
+    if (!file.type.startsWith('image/')) {
+      alert('Please upload image files only.');
+      return;
+    }
+
+    setLoadingRooms(true);
+    try {
+      await addRoomToSession(currentSessionId, file, roomType);
+      await loadRooms();
+      await loadSessions();
+    } catch (err) {
+      alert("Failed to upload room: " + err);
+    } finally {
+      setLoadingRooms(false);
+    }
+  };
+
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0] && currentSessionId && pendingRoomType) {
+    if (e.target.files && e.target.files[0] && pendingRoomType) {
       const file = e.target.files[0];
-      setLoadingRooms(true);
+      const roomTypeForUpload = pendingRoomType;
       try {
-        await addRoomToSession(currentSessionId, file, pendingRoomType);
-        await loadRooms();
-        await loadSessions();
-      } catch (err) {
-        alert("Failed to upload room: " + err);
+        await uploadRoomImage(file, roomTypeForUpload);
       } finally {
-        setLoadingRooms(false);
         setPendingRoomType(null);
       }
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent<HTMLButtonElement>, type: RoomType) => {
+    if (!Array.from(e.dataTransfer.types).includes('Files')) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    if (draggedRoomType !== type) {
+      setDraggedRoomType(type);
+    }
+  };
+
+  const handleDragLeave = (e: React.DragEvent<HTMLButtonElement>, type: RoomType) => {
+    e.preventDefault();
+    if (draggedRoomType === type) {
+      setDraggedRoomType(null);
+    }
+  };
+
+  const handleDrop = async (e: React.DragEvent<HTMLButtonElement>, type: RoomType) => {
+    if (!Array.from(e.dataTransfer.types).includes('Files')) return;
+    e.preventDefault();
+    setDraggedRoomType(null);
+    const files = e.dataTransfer.files;
+    if (files && files[0]) {
+      await uploadRoomImage(files[0], type);
     }
   };
 
@@ -186,27 +272,36 @@ function App() {
         </div>
 
         <div className="flex-1 overflow-y-auto px-2 space-y-1">
-          {sessions.map(session => (
-            <div
-              key={session.id}
-              onClick={() => setCurrentSessionId(session.id)}
-              className={`group flex items-center justify-between px-3 py-2 rounded-md text-sm cursor-pointer transition-colors ${currentSessionId === session.id
-                ? 'bg-indigo-50 text-indigo-700 font-medium'
-                : 'text-gray-600 hover:bg-gray-100'
-                }`}
-            >
-              <div className="truncate max-w-[140px]">
-                {session.name || 'Untitled Session'}
-              </div>
-              <button
-                onClick={(e) => handleDeleteSession(e, session.id)}
-                className="opacity-0 group-hover:opacity-100 p-1 hover:text-red-600 transition-opacity"
-                title="Delete Session"
+          {sessions.map(session => {
+            const sessionStatusValue = resolveSessionStatus(session.status);
+            const statusMeta = SESSION_STATUS_META[sessionStatusValue];
+            return (
+              <div
+                key={session.id}
+                onClick={() => setCurrentSessionId(session.id)}
+                className={`group flex items-center justify-between px-3 py-2 rounded-md text-sm cursor-pointer transition-colors ${currentSessionId === session.id
+                  ? 'bg-indigo-50 text-indigo-700 font-medium'
+                  : 'text-gray-600 hover:bg-gray-100'
+                  }`}
               >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-              </button>
-            </div>
-          ))}
+                <div className="flex items-center gap-2 truncate max-w-[140px]">
+                  <span
+                    className={`w-2.5 h-2.5 rounded-full ${statusMeta.dotClass}`}
+                    title={statusMeta.label}
+                    aria-label={`Status: ${statusMeta.label}`}
+                  />
+                  <span className="truncate">{session.name || 'Untitled Session'}</span>
+                </div>
+                <button
+                  onClick={(e) => handleDeleteSession(e, session.id)}
+                  className="opacity-0 group-hover:opacity-100 p-1 hover:text-red-600 transition-opacity"
+                  title="Delete Session"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                </button>
+              </div>
+            );
+          })}
         </div>
       </aside>
 
@@ -214,7 +309,7 @@ function App() {
       <main className="flex-1 flex flex-col h-screen overflow-hidden">
         {/* Header */}
         <header className="bg-white border-b border-gray-200 shrink-0">
-          <div className="px-6 py-4 flex items-center justify-between">
+          <div className="px-6 py-4 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <h2 className="text-lg font-semibold text-gray-900">{currentSession?.name || 'Loading...'}</h2>
               <p className="text-sm text-gray-500 flex gap-4 mt-1">
@@ -222,6 +317,31 @@ function App() {
                 <span>{stats.promptsGenerated} Prompts</span>
                 <span>{stats.imagesGenerated} Renders</span>
               </p>
+            </div>
+            <div className="flex flex-col gap-2 lg:items-end">
+              <span className="text-xs font-semibold text-gray-500 tracking-wide uppercase">Session Status</span>
+              <div className="flex flex-wrap gap-2">
+                {SESSION_STATUS_ORDER.map((statusOption) => {
+                  const statusMeta = SESSION_STATUS_META[statusOption];
+                  const isActive = currentSessionStatus === statusOption;
+                  const isDisabled = !currentSessionId || isUpdatingStatus;
+                  return (
+                    <button
+                      type="button"
+                      key={statusOption}
+                      onClick={() => handleSessionStatusChange(statusOption)}
+                      disabled={isDisabled}
+                      className={`flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-full border transition ${isActive
+                        ? statusMeta.activeClasses
+                        : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
+                        } ${isDisabled ? 'opacity-60 cursor-not-allowed' : ''}`}
+                    >
+                      <span className={`w-2 h-2 rounded-full ${statusMeta.dotClass}`} />
+                      {statusMeta.label}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           </div>
         </header>
@@ -258,16 +378,32 @@ function App() {
                     </div>
                   ) : (
                     <div className="grid grid-cols-2 gap-3">
-                      {Object.values(RoomType).map((type) => (
-                        <button
-                          key={type}
-                          onClick={() => handleAddRoomClick(type)}
-                          className="flex items-center justify-center gap-2 px-4 py-3 bg-white border border-gray-200 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 hover:border-indigo-300 hover:text-indigo-600 transition-all shadow-sm group"
-                        >
-                          <svg className="w-4 h-4 text-gray-400 group-hover:text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" /></svg>
-                          {type}
-                        </button>
-                      ))}
+                      {Object.values(RoomType).map((type) => {
+                        const isDragTarget = draggedRoomType === type;
+                        return (
+                          <button
+                            key={type}
+                            onClick={() => handleAddRoomClick(type)}
+                            onDragOver={(e) => handleDragOver(e, type)}
+                            onDragLeave={(e) => handleDragLeave(e, type)}
+                            onDrop={(e) => handleDrop(e, type)}
+                            className={`flex items-center justify-center gap-2 px-4 py-3 bg-white border rounded-lg text-sm font-medium transition-all shadow-sm group ${isDragTarget
+                              ? 'border-indigo-400 bg-indigo-50 text-indigo-700'
+                              : 'border-gray-200 text-gray-700 hover:bg-gray-50 hover:border-indigo-300 hover:text-indigo-600'
+                              }`}
+                          >
+                            <svg
+                              className={`w-4 h-4 ${isDragTarget ? 'text-indigo-500' : 'text-gray-400 group-hover:text-indigo-500'}`}
+                              fill="none"
+                              stroke="currentColor"
+                              viewBox="0 0 24 24"
+                            >
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" />
+                            </svg>
+                            {type}
+                          </button>
+                        );
+                      })}
                     </div>
                   )}
 

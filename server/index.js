@@ -11,6 +11,13 @@ import { fileURLToPath, URL } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+const SESSION_STATUS_VALUES = new Set(['not_started', 'in_progress', 'completed']);
+const normalizeSessionStatus = (value = '') => {
+    if (typeof value !== 'string') return 'not_started';
+    const normalized = value.toLowerCase();
+    return SESSION_STATUS_VALUES.has(normalized) ? normalized : 'not_started';
+};
+
 const app = express();
 const PORT = 3001;
 
@@ -126,8 +133,10 @@ app.get('/api/sessions', (req, res) => {
 
 app.post('/api/sessions', (req, res) => {
     try {
-        const { id, name, lastModified } = req.body;
-        db.prepare('INSERT INTO sessions (id, name, lastModified) VALUES (?, ?, ?)').run(id, name, lastModified);
+        const { id, name, lastModified, status } = req.body;
+        const safeLastModified = lastModified ?? Date.now();
+        const safeStatus = normalizeSessionStatus(status);
+        db.prepare('INSERT INTO sessions (id, name, lastModified, status) VALUES (?, ?, ?, ?)').run(id, name, safeLastModified, safeStatus);
 
         // Create folder structure immediately
         if (name) {
@@ -143,7 +152,7 @@ app.post('/api/sessions', (req, res) => {
 app.patch('/api/sessions/:id', (req, res) => {
     try {
         const { id } = req.params;
-        const { name, lastModified } = req.body;
+        const { name, lastModified, status } = req.body;
 
         const currentSession = db.prepare('SELECT name FROM sessions WHERE id = ?').get(id);
         if (!currentSession) return res.status(404).json({ error: 'Session not found' });
@@ -236,6 +245,10 @@ app.patch('/api/sessions/:id', (req, res) => {
         if (lastModified !== undefined) {
             updates.push('lastModified = @lastModified');
             params.lastModified = lastModified;
+        }
+        if (status !== undefined) {
+            updates.push('status = @status');
+            params.status = normalizeSessionStatus(status);
         }
 
         if (updates.length > 0) {

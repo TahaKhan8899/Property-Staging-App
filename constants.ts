@@ -28,6 +28,7 @@ Match this brand style as closely as possible:
 - Layered textures: woven area rugs, textured throws, and pillows with subtle patterns or color-blocking.
 - Minimal but intentional styling: 1–3 decor items per surface (books, trays, candles, vases, bowls of fruit, etc.), no clutter.
 - Natural light should look realistic and consistent with the original photo; soft shadows going in the same direction as existing shadows and highlights.
+- Any paintings should not obstruct any wall fixtures or architectural elements.
 
 ROOM-BY-ROOM GUIDELINES
 - Living rooms:

@@ -19,7 +19,8 @@ const schema = `
   CREATE TABLE IF NOT EXISTS sessions (
     id TEXT PRIMARY KEY,
     name TEXT,
-    lastModified INTEGER
+    lastModified INTEGER,
+    status TEXT DEFAULT 'not_started'
   );
 
   CREATE TABLE IF NOT EXISTS rooms (
@@ -64,6 +65,18 @@ try {
   db.prepare('ALTER TABLE rooms ADD COLUMN currentVersionId TEXT').run();
 } catch (e) {
   // Column likely exists
+}
+
+try {
+  db.prepare("ALTER TABLE sessions ADD COLUMN status TEXT DEFAULT 'not_started'").run();
+} catch (e) {
+  // Column likely exists
+}
+
+try {
+  db.prepare("UPDATE sessions SET status = 'not_started' WHERE status IS NULL").run();
+} catch (e) {
+  // ignore - table might be empty
 }
 
 export default db;
