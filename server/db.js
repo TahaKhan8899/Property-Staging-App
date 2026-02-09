@@ -38,6 +38,7 @@ const schema = `
     isGeneratingImage INTEGER,  -- 0 or 1
     error TEXT,
     currentVersionId TEXT,
+    roomStatus TEXT DEFAULT 'in_progress',
     FOREIGN KEY(sessionId) REFERENCES sessions(id) ON DELETE CASCADE
   );
 
@@ -82,6 +83,18 @@ try {
 
 try {
   db.prepare("UPDATE sessions SET status = 'not_started' WHERE status IS NULL").run();
+} catch (e) {
+  // ignore - table might be empty
+}
+
+try {
+  db.prepare("ALTER TABLE rooms ADD COLUMN roomStatus TEXT DEFAULT 'in_progress'").run();
+} catch (e) {
+  // Column likely exists
+}
+
+try {
+  db.prepare("UPDATE rooms SET roomStatus = 'in_progress' WHERE roomStatus IS NULL").run();
 } catch (e) {
   // ignore - table might be empty
 }

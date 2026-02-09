@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { RoomData, RoomType, ImageVersion, PromptSnapshot } from '../types';
+import { RoomData, RoomType, ImageVersion, PromptSnapshot, RoomStatus } from '../types';
 import { generateStagingPrompt, generateStagedImage, refinePrompt, editGeneratedImage } from '../services/geminiService';
 import { saveGeneratedImage, getImageVersions, restoreImageVersion, uploadStagedImage } from '../services/db';
 import ImageCompareModal from './ImageCompareModal';
@@ -11,7 +11,22 @@ interface RoomCardProps {
   onRemove: (id: string) => void;
 }
 
+const ROOM_STATUS_ORDER: RoomStatus[] = ['in_progress', 'done'];
+const ROOM_STATUS_META: Record<RoomStatus, { label: string; dotClass: string; activeClasses: string }> = {
+  in_progress: {
+    label: 'In Progress',
+    dotClass: 'bg-amber-500',
+    activeClasses: 'border-amber-200 bg-amber-50 text-amber-700'
+  },
+  done: {
+    label: 'Done',
+    dotClass: 'bg-emerald-500',
+    activeClasses: 'border-emerald-200 bg-emerald-50 text-emerald-700'
+  }
+};
+
 const RoomCard: React.FC<RoomCardProps> = ({ room, onUpdate, onRemove }) => {
+  const roomStatus = (room.roomStatus || 'in_progress') as RoomStatus;
   const [promptText, setPromptText] = useState(room.generatedPrompt);
   const [progressThought, setProgressThought] = useState<string>('');
   const [interimImageUrl, setInterimImageUrl] = useState<string | undefined>(undefined);
@@ -305,6 +320,11 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, onUpdate, onRemove }) => {
     fileInputRef.current?.click();
   };
 
+  const handleRoomStatusChange = (nextStatus: RoomStatus) => {
+    if (nextStatus === roomStatus) return;
+    onUpdate(room.id, { roomStatus: nextStatus });
+  };
+
   const renderUploadButton = (label: string, extraClasses = '') => (
     <button
       onClick={handleUploadTrigger}
@@ -338,8 +358,8 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, onUpdate, onRemove }) => {
         className="hidden"
       />
       {/* Header / Toolbar */}
-      <div className="bg-gray-50 px-4 py-3 border-b border-gray-100 flex justify-between items-center">
-        <div className="flex items-center gap-3">
+      <div className="bg-gray-50 px-4 py-3 border-b border-gray-100 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div className="flex flex-wrap items-center gap-3">
           <select
             value={room.roomType}
             onChange={(e) => onUpdate(room.id, { roomType: e.target.value as RoomType })}
@@ -357,18 +377,40 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, onUpdate, onRemove }) => {
             />
           )}
         </div>
-        <button
-          onClick={handleDeleteClick}
-          className={`text-sm font-medium transition-colors px-3 py-1 rounded ${showDeleteConfirm
-            ? 'bg-red-500 text-white hover:bg-red-600'
-            : 'text-gray-400 hover:text-red-500'
-            }`}
-          title={showDeleteConfirm ? 'Click again to confirm deletion' : 'Remove Room'}
-        >
-          {showDeleteConfirm ? 'Confirm Delete?' : (
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
-          )}
-        </button>
+        <div className="flex flex-wrap items-center gap-2 md:justify-end">
+          <div className="flex flex-wrap gap-2 justify-end">
+            {ROOM_STATUS_ORDER.map(statusOption => {
+              const meta = ROOM_STATUS_META[statusOption];
+              const isActive = roomStatus === statusOption;
+              return (
+                <button
+                  type="button"
+                  key={statusOption}
+                  onClick={() => handleRoomStatusChange(statusOption)}
+                  className={`flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-full border transition ${isActive
+                    ? meta.activeClasses
+                    : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-100'
+                    }`}
+                >
+                  <span className={`w-2 h-2 rounded-full ${meta.dotClass}`} />
+                  {meta.label}
+                </button>
+              );
+            })}
+          </div>
+          <button
+            onClick={handleDeleteClick}
+            className={`text-sm font-medium transition-colors px-3 py-1 rounded ${showDeleteConfirm
+              ? 'bg-red-500 text-white hover:bg-red-600'
+              : 'text-gray-400 hover:text-red-500'
+              }`}
+            title={showDeleteConfirm ? 'Click again to confirm deletion' : 'Remove Room'}
+          >
+            {showDeleteConfirm ? 'Confirm Delete?' : (
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
+            )}
+          </button>
+        </div>
       </div>
 
       {/* Content Area */}

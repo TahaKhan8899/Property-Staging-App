@@ -8,6 +8,7 @@ export enum RoomType {
 }
 
 export type SessionStatus = 'not_started' | 'in_progress' | 'completed';
+export type RoomStatus = 'in_progress' | 'done';
 
 export interface PromptSnapshot {
   basePrompt?: string | null;
@@ -34,6 +35,7 @@ export interface RoomData {
   previewUrl: string;
   roomType: RoomType;
   customLabel: string;
+  roomStatus?: RoomStatus;
 
   // Prompt State
   initialThoughts?: string; // User's initial ideas before generation

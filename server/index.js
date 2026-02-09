@@ -18,6 +18,13 @@ const normalizeSessionStatus = (value = '') => {
     return SESSION_STATUS_VALUES.has(normalized) ? normalized : 'not_started';
 };
 
+const ROOM_STATUS_VALUES = new Set(['in_progress', 'done']);
+const normalizeRoomStatus = (value = '') => {
+    if (typeof value !== 'string') return 'in_progress';
+    const normalized = value.toLowerCase();
+    return ROOM_STATUS_VALUES.has(normalized) ? normalized : 'in_progress';
+};
+
 const app = express();
 const PORT = 3001;
 
@@ -326,6 +333,7 @@ app.get('/api/sessions/:id/rooms', (req, res) => {
                 const publicStaged = getPublicUploadUrl(r.generatedImageUrl);
                 if (publicStaged) r.generatedImageUrl = publicStaged;
             }
+            r.roomStatus = normalizeRoomStatus(r.roomStatus);
             return r;
         });
 
@@ -340,7 +348,8 @@ app.post('/api/rooms', upload.single('file'), (req, res) => {
     try {
         if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
-        const { id, sessionId, roomType, customLabel } = req.body;
+        const { id, sessionId, roomType, customLabel, roomStatus } = req.body;
+        const normalizedRoomStatus = normalizeRoomStatus(roomStatus);
 
         // 1. Get Session Info
         const session = db.prepare('SELECT name FROM sessions WHERE id = ?').get(sessionId);
@@ -388,18 +397,19 @@ app.post('/api/rooms', upload.single('file'), (req, res) => {
             isPromptApproved: 0,
             generatedImageUrl: '',
             isGeneratingImage: 0,
-            error: ''
+            error: '',
+            roomStatus: normalizedRoomStatus
         };
 
         const stmt = db.prepare(`
             INSERT INTO rooms (
                 id, sessionId, roomType, customLabel, filePath, 
                 generatedPrompt, initialPrompt, isGeneratingPrompt, isPromptApproved, 
-                generatedImageUrl, isGeneratingImage, error
+                generatedImageUrl, isGeneratingImage, error, roomStatus
             ) VALUES (
                 @id, @sessionId, @roomType, @customLabel, @filePath, 
                 @generatedPrompt, @initialPrompt, @isGeneratingPrompt, @isPromptApproved, 
-                @generatedImageUrl, @isGeneratingImage, @error
+                @generatedImageUrl, @isGeneratingImage, @error, @roomStatus
             )
         `);
         stmt.run(data);
@@ -590,6 +600,9 @@ app.patch('/api/rooms/:id', (req, res) => {
     try {
         const { id } = req.params;
         const updates = req.body;
+        if (updates.roomStatus !== undefined) {
+            updates.roomStatus = normalizeRoomStatus(updates.roomStatus);
+        }
 
         // Edge Case: If RoomType changes, we should rename the file.
         // e.g. "Bedroom 1" -> "Living Room 1"
@@ -647,7 +660,7 @@ app.patch('/api/rooms/:id', (req, res) => {
         const allowedCols = [
             'roomType', 'customLabel', 'generatedPrompt', 'initialPrompt',
             'isGeneratingPrompt', 'isPromptApproved', 'generatedImageUrl',
-            'isGeneratingImage', 'error', 'filePath' // filePath allowed for internal update
+            'isGeneratingImage', 'error', 'filePath', 'roomStatus' // filePath allowed for internal update
         ];
 
         keys.forEach(k => {

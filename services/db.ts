@@ -1,4 +1,4 @@
-import { RoomData, RoomType, SessionStatus, PromptSnapshot } from '../types';
+import { RoomData, RoomType, SessionStatus, PromptSnapshot, RoomStatus } from '../types';
 
 const API_BASE = 'http://localhost:3001/api';
 
@@ -92,11 +92,17 @@ export const getRoomsForSession = async (sessionId: string): Promise<RoomData[]>
   return rooms.map((r: any) => ({
     ...r,
     previewUrl: getFullUrl(r.filePath),
-    generatedImageUrl: getFullUrl(r.generatedImageUrl)
+    generatedImageUrl: getFullUrl(r.generatedImageUrl),
+    roomStatus: (r.roomStatus || 'in_progress') as RoomStatus
   }));
 };
 
-export const addRoomToSession = async (sessionId: string, file: File, roomType: RoomType = RoomType.Bedroom) => {
+export const addRoomToSession = async (
+  sessionId: string,
+  file: File,
+  roomType: RoomType = RoomType.Bedroom,
+  roomStatus: RoomStatus = 'in_progress'
+) => {
   const id = crypto.randomUUID();
 
   const formData = new FormData();
@@ -105,6 +111,7 @@ export const addRoomToSession = async (sessionId: string, file: File, roomType: 
   formData.append('file', file);
   formData.append('roomType', roomType);
   formData.append('customLabel', '');
+  formData.append('roomStatus', roomStatus);
   // Default values for new room
   formData.append('isGeneratingPrompt', 'false');
   formData.append('isPromptApproved', 'false');
