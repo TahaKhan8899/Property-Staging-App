@@ -18,7 +18,7 @@ A single, minimal app to cut staging time by 50% by automating prompt generation
 - **Room Labeling**: Tag images as Bedroom, Living Room, Kitchen, etc.
 - **Auto-Prompter**: Uses **Gemini 3 Pro** to analyze rooms and generate detailed staging prompts based on a designer system prompt.
 - **Review & Edit**: Manually review, edit, and approve prompts before generation.
-- **4K Generation**: One-click generation of 4K, 16:9 staged images using **Nano Banana Pro**.
+- **2K Generation**: One-click generation of 2K, 16:9 staged images using **Nano Banana Pro**.
 - **Comparison**: Side-by-side view of original vs. staged images.
 
 ## Technology Stack
@@ -47,4 +47,3 @@ A single, minimal app to cut staging time by 50% by automating prompt generation
    ```
 
 This application was originally bootstrapped in Google AI Studio.
-

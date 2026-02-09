@@ -7,7 +7,7 @@ This document captures the current behavior of the WH Staging Assistant after mu
 ## 1. Purpose & Success
 
 - **Problem:** The pre-app workflow required jumping between ChatGPT, Nano Banana Pro, and desktop organization tools to stage 4–5 rooms per unit (~60–70 minutes each).  
-- **Goal:** Provide one pane of glass to upload unit photos, label rooms, auto-generate/edit prompts, produce 4K renders, and download deliverables.  
+- **Goal:** Provide one pane of glass to upload unit photos, label rooms, auto-generate/edit prompts, produce 2K renders, and download deliverables.  
 - **Success metric:** ≥50% reduction in per-unit staging time. Current solution introduces automated prompt generation, streamlined approvals, and one-click rendering, moving the process toward that target.
 
 ---
@@ -19,8 +19,8 @@ This document captures the current behavior of the WH Staging Assistant after mu
 3. **Image intake:** The “Add Rooms” palette uploads files per room type. Files are auto-renamed and stored in `server/uploads/<session>/original` with sequential numbering (e.g., `Bedroom 2.jpg`) (`server/index.js:305-375`).  
 4. **Room cards:** Each upload produces a `RoomCard` with original preview, prompt workspace, action footer, and staged output once available (`components/RoomCard.tsx`).  
 5. **Prompt generation:** Clicking **Generate Prompt** invokes Gemini 3 Pro (text model) with the designer system prompt plus optional “initial thoughts” jot sheet. Output becomes editable text with reset/regenerate/refine tools and approval gating (`components/RoomCard.tsx:550-637`).  
-6. **Render:** When a prompt is approved, **Generate Staged Image (4K)** calls the Nano Banana Pro equivalent (`gemini-3-pro-image-preview`) via streaming, surfaces interim thinking/images, then persists the resulting JPEG and version metadata (`components/RoomCard.tsx:133-199`, `services/geminiService.ts:208-330`, `server/index.js:381-451`).  
-7. **Review & iteration:** Users can edit renders inline, upload replacements, hop across version history, compare original vs staged in a full-modal view, and download 4K or server-side-compressed copies (`components/RoomCard.tsx:203-701`, `components/ImageCompareModal.tsx`).  
+6. **Render:** When a prompt is approved, **Generate Staged Image (2K)** calls the Nano Banana Pro equivalent (`gemini-3-pro-image-preview`) via streaming, surfaces interim thinking/images, then persists the resulting JPEG and version metadata (`components/RoomCard.tsx:133-199`, `services/geminiService.ts:208-330`, `server/index.js:381-451`).  
+7. **Review & iteration:** Users can edit renders inline, upload replacements, hop across version history, compare original vs staged in a full-modal view, and download 2K or server-side-compressed copies (`components/RoomCard.tsx:203-701`, `components/ImageCompareModal.tsx`).  
 8. **Delivery:** Staged files live under `/uploads/<Session>/staged`. The server can emit compressed JPGs on demand via Sharp (`server/index.js:657-717`). Manual downloads open in a new tab for immediate saving.
 
 ---
@@ -33,7 +33,7 @@ This document captures the current behavior of the WH Staging Assistant after mu
 | Image upload | Manual upload through UI, session-scoped | Drag-to-upload per room type with sanitized naming and folder structure; server enforces unique numbering per type (`server/index.js:305-375`) |
 | Prompting | Generate once, edit, approve | Adds initial-thoughts textbox, structured designer system prompt (12-point rubric), regenerate/reset + AI-powered refine, and approval state that locks textarea (`components/RoomCard.tsx:109-578`, `constants.ts:1-94`) |
 | AI Models | Gemini 3 Pro + Nano Banana Pro | Implemented via `@google/genai` SDK with model constants, manual API key capture, progress streaming, and exponential backoff for 503s (`services/geminiService.ts:1-330`) |
-| Rendering | One-click 4K | Supports 4K/16:9 default rendering, inline progress narration, interim image previews, and auto-JPEG conversion before persistence (`components/RoomCard.tsx:133-199`, `services/geminiService.ts:208-330`) |
+| Rendering | One-click 2K | Supports 2K/16:9 default rendering, inline progress narration, interim image previews, and auto-JPEG conversion before persistence (`components/RoomCard.tsx:133-199`, `services/geminiService.ts:208-330`) |
 | Review UI | Side-by-side original vs staged | Adds compare modal with keyboard toggles, downloadable compressed copies, version navigation, edit instructions, external upload with versioning, and delete confirmations (`components/RoomCard.tsx:203-701`, `components/ImageCompareModal.tsx`) |
 | Storage | In-memory MVP | Local SQLite (`server/db.js`) + filesystem hierarchy `/server/uploads/<Session>/{original,staged,staged-compressed}` with cascading cleanup and recorded version metadata |
 | Extras beyond PRD | N/A | Version history, render editing, streaming progress, manual staged uploads, session rename propagation, API key overlay, compressed downloads, confirm-to-delete guard, stats per session, Dexie placeholder if needed later |
@@ -61,7 +61,7 @@ This document captures the current behavior of the WH Staging Assistant after mu
 - Every render (auto or manual upload) creates an `image_versions` row, enabling previous-version restores, version navigation UI, and descriptions describing what changed (`components/RoomCard.tsx:203-241`, `server/index.js:381-520`).  
 - Users can upload staged assets from other editors (e.g., Canva), which are versioned exactly like AI renders (`server/index.js:453-525`, `components/RoomCard.tsx:220-241`).  
 - The compare modal offers full-screen, keyboard-friendly before/after toggling to inspect details before delivery (`components/ImageCompareModal.tsx:10-110`).  
-- Download controls include original 4K (opens new tab) and server-compressed JPEGs built with Sharp for lightweight review sharing (`components/RoomCard.tsx:243-431`, `server/index.js:657-717`).
+- Download controls include original 2K (opens new tab) and server-compressed JPEGs built with Sharp for lightweight review sharing (`components/RoomCard.tsx:243-431`, `server/index.js:657-717`).
 
 ### Reliability & Guardrails
 - API keys can be pulled from Vite env vars, localStorage, or AI Studio’s `window.aistudio` bridge to match Gemini billing models (`components/ApiKeySelector.tsx`, `services/geminiService.ts:42-50`).  

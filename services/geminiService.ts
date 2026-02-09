@@ -220,7 +220,7 @@ export const generateStagedImage = async (
     const ai = new GoogleGenAI({
       apiKey,
       httpOptions: {
-        timeout: 5 * 60 * 1000 // 5 minutes timeout for 4K image generation
+        timeout: 5 * 60 * 1000 // 5 minutes timeout for 2K image generation
       }
     });
 
@@ -343,7 +343,7 @@ export const editGeneratedImage = async (
     const ai = new GoogleGenAI({
       apiKey,
       httpOptions: {
-        timeout: 5 * 60 * 1000 // 5 minutes timeout for 4K image editing
+        timeout: 5 * 60 * 1000 // 5 minutes timeout for 2K image editing
       }
     });
 

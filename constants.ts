@@ -1,9 +1,9 @@
 // Models
 export const MODEL_TEXT_ANALYSIS = 'gemini-3-pro-preview';
-export const MODEL_IMAGE_GENERATION = 'gemini-3-pro-image-preview'; // Maps to "Nano Banana Pro" for 4K
+export const MODEL_IMAGE_GENERATION = 'gemini-3-pro-image-preview'; // Maps to "Nano Banana Pro" for 2K
 
 // Configuration
-export const IMAGE_RESOLUTION = '4K';
+export const IMAGE_RESOLUTION = '2K';
 export const IMAGE_ASPECT_RATIO = '16:9';
 
 // Prompts
