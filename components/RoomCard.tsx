@@ -1,8 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { RoomData, RoomType, ImageVersion } from '../types';
+import { RoomData, RoomType, ImageVersion, PromptSnapshot } from '../types';
 import { generateStagingPrompt, generateStagedImage, refinePrompt, editGeneratedImage } from '../services/geminiService';
 import { saveGeneratedImage, getImageVersions, restoreImageVersion, uploadStagedImage } from '../services/db';
 import ImageCompareModal from './ImageCompareModal';
+import PromptViewerModal from './PromptViewerModal';
 
 interface RoomCardProps {
   room: RoomData;
@@ -24,8 +25,25 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, onUpdate, onRemove }) => {
   const [isDownloadingCompressed, setIsDownloadingCompressed] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isCompareOpen, setIsCompareOpen] = useState(false);
+  const [isPromptViewerOpen, setIsPromptViewerOpen] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const currentVersion = versions[currentVersionIndex];
+
+  const resolveBasePrompt = () => (room.generatedPrompt || promptText || '').trim();
+  const buildPromptSnapshot = (source: string, extra: Partial<PromptSnapshot> = {}): PromptSnapshot => {
+    const basePrompt = resolveBasePrompt();
+    return {
+      basePrompt: basePrompt || undefined,
+      capturedAt: Date.now(),
+      source,
+      ...extra
+    };
+  };
+  const canViewPrompt = Boolean(currentVersion?.promptSnapshot || resolveBasePrompt());
+  const promptVersionLabel = currentVersion
+    ? `Version ${currentVersionIndex + 1} of ${versions.length || 1}`
+    : 'Current Version';
 
   // Sync local state if parent updates
   useEffect(() => {
@@ -51,7 +69,10 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, onUpdate, onRemove }) => {
     if (!room.generatedImageUrl && isCompareOpen) {
       setIsCompareOpen(false);
     }
-  }, [room.generatedImageUrl, isCompareOpen]);
+    if (!room.generatedImageUrl && isPromptViewerOpen) {
+      setIsPromptViewerOpen(false);
+    }
+  }, [room.generatedImageUrl, isCompareOpen, isPromptViewerOpen]);
 
   const loadVersions = async () => {
     try {
@@ -146,7 +167,8 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, onUpdate, onRemove }) => {
           if (img) setInterimImageUrl(img);
         }
       );
-      const { url, version } = await saveGeneratedImage(room.id, imageBase64, 'Initial generation');
+      const snapshot = buildPromptSnapshot('generate');
+      const { url, version } = await saveGeneratedImage(room.id, imageBase64, 'Initial generation', snapshot);
       onUpdate(room.id, {
         generatedImageUrl: url,
         isGeneratingImage: false,
@@ -180,7 +202,14 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, onUpdate, onRemove }) => {
           if (img) setInterimImageUrl(img);
         }
       );
-      const { url, version } = await saveGeneratedImage(room.id, editedImageBase64, `Edit: ${editText.substring(0, 50)}`);
+      const editInstruction = editText;
+      const snapshot = buildPromptSnapshot('edit', { editInstruction });
+      const { url, version } = await saveGeneratedImage(
+        room.id,
+        editedImageBase64,
+        `Edit: ${editInstruction.substring(0, 50)}`,
+        snapshot
+      );
       onUpdate(room.id, {
         generatedImageUrl: url,
         isEditingImage: false,
@@ -225,7 +254,8 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, onUpdate, onRemove }) => {
     onUpdate(room.id, { error: undefined });
 
     try {
-      const { url, version } = await uploadStagedImage(room.id, file);
+      const snapshot = buildPromptSnapshot('upload-staged');
+      const { url, version } = await uploadStagedImage(room.id, file, snapshot);
       onUpdate(room.id, {
         generatedImageUrl: url,
         currentVersionId: version.id
@@ -363,6 +393,16 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, onUpdate, onRemove }) => {
                   Staged Render
                 </span>
                 <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setIsPromptViewerOpen(true)}
+                    disabled={!canViewPrompt}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border border-gray-200 text-gray-600 bg-white hover:text-gray-900 hover:border-gray-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 4h13M8 9h13M8 14h13M3 4h.01M3 9h.01M3 14h.01" />
+                    </svg>
+                    View Prompt
+                  </button>
                   <button
                     onClick={() => setIsCompareOpen(true)}
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border border-gray-200 text-gray-600 bg-white hover:text-gray-900 hover:border-gray-300 transition-colors"
@@ -698,6 +738,14 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, onUpdate, onRemove }) => {
           onClose={() => setIsCompareOpen(false)}
         />
       )}
+      <PromptViewerModal
+        isOpen={isPromptViewerOpen}
+        onClose={() => setIsPromptViewerOpen(false)}
+        snapshot={currentVersion?.promptSnapshot}
+        fallbackPrompt={resolveBasePrompt() || null}
+        versionLabel={promptVersionLabel}
+        description={currentVersion?.description}
+      />
     </div>
   );
 };

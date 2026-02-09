@@ -1,4 +1,4 @@
-import { RoomData, RoomType, SessionStatus } from '../types';
+import { RoomData, RoomType, SessionStatus, PromptSnapshot } from '../types';
 
 const API_BASE = 'http://localhost:3001/api';
 
@@ -122,17 +122,32 @@ export const updateRoom = async (id: string, updates: Partial<RoomData>) => {
   await api.patch(`/rooms/${id}`, safeUpdates);
 };
 
-export const saveGeneratedImage = async (id: string, imageBase64: string, description?: string): Promise<{ url: string; version: any }> => {
-  const res = await api.post(`/rooms/${id}/generated`, { imageBase64, description });
+export const saveGeneratedImage = async (
+  id: string,
+  imageBase64: string,
+  description?: string,
+  promptSnapshot?: PromptSnapshot | Record<string, any> | string
+): Promise<{ url: string; version: any }> => {
+  const res = await api.post(`/rooms/${id}/generated`, { imageBase64, description, promptSnapshot });
   return {
     url: getFullUrl(res.url) || res.url,
     version: res.version
   };
 };
 
-export const uploadStagedImage = async (roomId: string, file: File): Promise<{ url: string; version: any }> => {
+export const uploadStagedImage = async (
+  roomId: string,
+  file: File,
+  promptSnapshot?: PromptSnapshot | Record<string, any> | string
+): Promise<{ url: string; version: any }> => {
   const formData = new FormData();
   formData.append('file', file);
+  if (promptSnapshot) {
+    formData.append(
+      'promptSnapshot',
+      typeof promptSnapshot === 'string' ? promptSnapshot : JSON.stringify(promptSnapshot)
+    );
+  }
 
   const res = await api.post(`/rooms/${roomId}/upload-staged`, formData);
   return {
@@ -145,7 +160,8 @@ export const getImageVersions = async (roomId: string) => {
   const versions = await api.get(`/rooms/${roomId}/versions`);
   return versions.map((v: any) => ({
     ...v,
-    url: getFullUrl(v.url)
+    url: getFullUrl(v.url),
+    promptSnapshot: v.promptSnapshot
   }));
 };
 

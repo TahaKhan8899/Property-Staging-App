@@ -9,6 +9,15 @@ export enum RoomType {
 
 export type SessionStatus = 'not_started' | 'in_progress' | 'completed';
 
+export interface PromptSnapshot {
+  basePrompt?: string | null;
+  editInstruction?: string | null;
+  source?: string;
+  capturedAt?: number;
+  notes?: string;
+  rawPrompt?: string | null;
+}
+
 export interface ImageVersion {
   id: string;
   roomId: string;
@@ -16,6 +25,7 @@ export interface ImageVersion {
   timestamp: number;
   description: string;
   versionNumber: number;
+  promptSnapshot?: PromptSnapshot | string | null;
 }
 
 export interface RoomData {

@@ -81,6 +81,27 @@ const getPublicUploadUrl = (storedPath = '') => {
     return relative ? `/uploads/${relative}` : '';
 };
 
+// Prompt snapshot helpers allow us to store JSON safely while remaining backwards compatible
+const stringifyPromptSnapshot = (snapshot) => {
+    if (snapshot === undefined || snapshot === null) return null;
+    if (typeof snapshot === 'string') return snapshot;
+    try {
+        return JSON.stringify(snapshot);
+    } catch {
+        return null;
+    }
+};
+
+const parsePromptSnapshot = (raw) => {
+    if (!raw) return null;
+    if (typeof raw === 'object') return raw;
+    try {
+        return JSON.parse(raw);
+    } catch {
+        return null;
+    }
+};
+
 // Get Session Folder Path
 const getSessionFolderPath = (sessionName) => {
     const safeName = sanitizeName(sessionName || 'Untitled Session');
@@ -395,7 +416,7 @@ app.post('/api/rooms', upload.single('file'), (req, res) => {
 app.post('/api/rooms/:id/generated', (req, res) => {
     try {
         const { id } = req.params;
-        const { imageBase64, description } = req.body;
+        const { imageBase64, description, promptSnapshot } = req.body;
 
         if (!imageBase64) return res.status(400).json({ error: 'No image data' });
 
@@ -407,12 +428,18 @@ app.post('/api/rooms/:id/generated', (req, res) => {
         const existingVersions = db.prepare('SELECT COUNT(*) as count FROM image_versions WHERE roomId = ?').get(id);
 
         // If room has a generatedImageUrl but no versions, create version 0 for the existing image
+        const fallbackPrompt = room.generatedPrompt || room.initialPrompt || null;
+
         if (existingVersions.count === 0 && room.generatedImageUrl) {
             const version0Id = crypto.randomUUID();
+            const version0Prompt = stringifyPromptSnapshot({
+                basePrompt: fallbackPrompt,
+                source: 'backfill'
+            });
             db.prepare(`
-                INSERT INTO image_versions (id, roomId, url, timestamp, description, versionNumber)
-                VALUES (?, ?, ?, ?, ?, ?)
-            `).run(version0Id, id, room.generatedImageUrl, Date.now() - 1000, 'Initial generation', 1);
+                INSERT INTO image_versions (id, roomId, url, timestamp, description, versionNumber, promptSnapshot)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            `).run(version0Id, id, room.generatedImageUrl, Date.now() - 1000, 'Initial generation', 1, version0Prompt);
         }
 
         // 3. Determine version number for new image
@@ -437,10 +464,13 @@ app.post('/api/rooms/:id/generated', (req, res) => {
         const relativePath = path.join(safeSessionName, 'staged', newFileName);
         const timestamp = Date.now();
 
+        const snapshotPayload = promptSnapshot ?? (fallbackPrompt ? { basePrompt: fallbackPrompt, source: 'generate' } : null);
+        const promptJson = stringifyPromptSnapshot(snapshotPayload);
+
         db.prepare(`
-            INSERT INTO image_versions (id, roomId, url, timestamp, description, versionNumber)
-            VALUES (?, ?, ?, ?, ?, ?)
-        `).run(versionId, id, relativePath, timestamp, description || 'Generated image', versionNumber);
+            INSERT INTO image_versions (id, roomId, url, timestamp, description, versionNumber, promptSnapshot)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        `).run(versionId, id, relativePath, timestamp, description || 'Generated image', versionNumber, promptJson);
 
         // 7. Update Room
         db.prepare('UPDATE rooms SET generatedImageUrl = ?, currentVersionId = ? WHERE id = ?')
@@ -453,7 +483,8 @@ app.post('/api/rooms/:id/generated', (req, res) => {
                 id: versionId,
                 versionNumber,
                 timestamp,
-                description: description || 'Generated image'
+                description: description || 'Generated image',
+                promptSnapshot: parsePromptSnapshot(promptJson)
             }
         });
 
@@ -469,6 +500,13 @@ app.post('/api/rooms/:id/upload-staged', upload.single('file'), (req, res) => {
         if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
         const { id } = req.params;
+        const promptSnapshotRaw = req.body?.promptSnapshot ? (() => {
+            try {
+                return JSON.parse(req.body.promptSnapshot);
+            } catch {
+                return req.body.promptSnapshot;
+            }
+        })() : null;
 
         // 1. Get Room Info
         const room = db.prepare('SELECT r.*, s.name as sessionName FROM rooms r JOIN sessions s ON r.sessionId = s.id WHERE r.id = ?').get(id);
@@ -481,12 +519,18 @@ app.post('/api/rooms/:id/upload-staged', upload.single('file'), (req, res) => {
         const existingVersions = db.prepare('SELECT COUNT(*) as count FROM image_versions WHERE roomId = ?').get(id);
 
         // If room has a generatedImageUrl but no versions, create version 0 for the existing image
+        const fallbackPrompt = room.generatedPrompt || room.initialPrompt || null;
+
         if (existingVersions.count === 0 && room.generatedImageUrl) {
             const version0Id = crypto.randomUUID();
+            const version0Prompt = stringifyPromptSnapshot({
+                basePrompt: fallbackPrompt,
+                source: 'backfill'
+            });
             db.prepare(`
-                INSERT INTO image_versions (id, roomId, url, timestamp, description, versionNumber)
-                VALUES (?, ?, ?, ?, ?, ?)
-            `).run(version0Id, id, room.generatedImageUrl, Date.now() - 1000, 'Initial generation', 1);
+                INSERT INTO image_versions (id, roomId, url, timestamp, description, versionNumber, promptSnapshot)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            `).run(version0Id, id, room.generatedImageUrl, Date.now() - 1000, 'Initial generation', 1, version0Prompt);
         }
 
         // 3. Determine version number for new image
@@ -511,10 +555,13 @@ app.post('/api/rooms/:id/upload-staged', upload.single('file'), (req, res) => {
         const relativePath = path.join(safeSessionName, 'staged', newFileName);
         const timestamp = Date.now();
 
+        const snapshotPayload = promptSnapshotRaw ?? (fallbackPrompt ? { basePrompt: fallbackPrompt, source: 'upload-staged' } : { source: 'upload-staged' });
+        const promptJson = stringifyPromptSnapshot(snapshotPayload);
+
         db.prepare(`
-            INSERT INTO image_versions (id, roomId, url, timestamp, description, versionNumber)
-            VALUES (?, ?, ?, ?, ?, ?)
-        `).run(versionId, id, relativePath, timestamp, 'Uploaded external image', versionNumber);
+            INSERT INTO image_versions (id, roomId, url, timestamp, description, versionNumber, promptSnapshot)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        `).run(versionId, id, relativePath, timestamp, 'Uploaded external image', versionNumber, promptJson);
 
         // 7. Update Room
         db.prepare('UPDATE rooms SET generatedImageUrl = ?, currentVersionId = ? WHERE id = ?')
@@ -527,7 +574,8 @@ app.post('/api/rooms/:id/upload-staged', upload.single('file'), (req, res) => {
                 id: versionId,
                 versionNumber,
                 timestamp,
-                description: 'Uploaded external image'
+                description: 'Uploaded external image',
+                promptSnapshot: parsePromptSnapshot(promptJson)
             }
         });
 
@@ -638,7 +686,8 @@ app.get('/api/rooms/:id/versions', (req, res) => {
             const normalizedUrl = getPublicUploadUrl(v.url);
             return {
                 ...v,
-                url: normalizedUrl || v.url
+                url: normalizedUrl || v.url,
+                promptSnapshot: parsePromptSnapshot(v.promptSnapshot)
             };
         });
 

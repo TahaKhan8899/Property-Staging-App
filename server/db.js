@@ -48,6 +48,7 @@ const schema = `
     timestamp INTEGER,
     description TEXT,
     versionNumber INTEGER,
+    promptSnapshot TEXT,
     FOREIGN KEY(roomId) REFERENCES rooms(id) ON DELETE CASCADE
   );
 `;
@@ -63,6 +64,12 @@ try {
 
 try {
   db.prepare('ALTER TABLE rooms ADD COLUMN currentVersionId TEXT').run();
+} catch (e) {
+  // Column likely exists
+}
+
+try {
+  db.prepare('ALTER TABLE image_versions ADD COLUMN promptSnapshot TEXT').run();
 } catch (e) {
   // Column likely exists
 }
