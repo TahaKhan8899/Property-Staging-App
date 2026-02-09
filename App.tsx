@@ -11,7 +11,8 @@ import {
   addRoomToSession,
   getRoomsForSession,
   updateRoom as updateRoomInDB,
-  deleteRoom
+  deleteRoom,
+  reorderSessions
 } from './services/db';
 import type { SessionEntity } from './services/db';
 
@@ -43,6 +44,11 @@ const resolveSessionStatus = (status?: SessionStatus | null) => {
   return DEFAULT_SESSION_STATUS;
 };
 
+const ordersEqual = (a: string[], b: string[]) => {
+  if (a.length !== b.length) return false;
+  return a.every((value, index) => value === b[index]);
+};
+
 function App() {
   // --- Data Fetching ---
   const [sessions, setSessions] = useState<SessionEntity[] | null>(null);
@@ -51,9 +57,14 @@ function App() {
   const [isApiKeyValid, setIsApiKeyValid] = useState(false);
   const [loadingRooms, setLoadingRooms] = useState(false);
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
+  const [draggedSessionId, setDraggedSessionId] = useState<string | null>(null);
+  const [dragOverSessionId, setDragOverSessionId] = useState<string | null>(null);
+  const [isSavingSessionOrder, setIsSavingSessionOrder] = useState(false);
+  const initialSessionOrderRef = useRef<string[]>([]);
+  const dragAcceptedRef = useRef(false);
 
   // Load Sessions on Mount & Polling/Refresh
-  const loadSessions = async () => {
+  const loadSessions = useCallback(async () => {
     try {
       const data = await getSessions();
       setSessions(data);
@@ -62,11 +73,11 @@ function App() {
       console.error("Failed to load sessions", e);
       return [];
     }
-  };
+  }, []);
 
   useEffect(() => {
     loadSessions();
-  }, []);
+  }, [loadSessions]);
 
   // Initialize Session selection
   useEffect(() => {
@@ -87,6 +98,134 @@ function App() {
 
   const currentSession = sessions?.find(s => s.id === currentSessionId);
   const currentSessionStatus = resolveSessionStatus(currentSession?.status);
+
+  const revertSessionOrder = useCallback(() => {
+    setSessions(prev => {
+      const originalOrder = initialSessionOrderRef.current;
+      if (!prev || !originalOrder.length) return prev;
+      const sessionMap = new Map(prev.map(session => [session.id, session]));
+      const reordered = originalOrder
+        .map(id => sessionMap.get(id))
+        .filter((session): session is SessionEntity => Boolean(session));
+      const leftovers = prev.filter(session => !originalOrder.includes(session.id));
+      return [...reordered, ...leftovers];
+    });
+  }, []);
+
+  const moveDraggedSession = useCallback(
+    (targetId: string | null) => {
+      if (!draggedSessionId) return;
+      setSessions(prev => {
+        if (!prev) return prev;
+        if (targetId === draggedSessionId) return prev;
+        const updated = [...prev];
+        const fromIndex = updated.findIndex(session => session.id === draggedSessionId);
+        if (fromIndex === -1) return prev;
+        const [movedSession] = updated.splice(fromIndex, 1);
+
+        if (targetId) {
+          const toIndex = updated.findIndex(session => session.id === targetId);
+          if (toIndex === -1) {
+            updated.splice(fromIndex, 0, movedSession);
+            return prev;
+          }
+          updated.splice(toIndex, 0, movedSession);
+        } else {
+          updated.push(movedSession);
+        }
+
+        return updated;
+      });
+    },
+    [draggedSessionId]
+  );
+
+  const handleSessionDragStart = useCallback(
+    (event: React.DragEvent<HTMLDivElement>, sessionId: string) => {
+      event.dataTransfer?.setData('text/plain', sessionId);
+      event.dataTransfer?.setDragImage(new Image(), 0, 0);
+      setDraggedSessionId(sessionId);
+      dragAcceptedRef.current = false;
+      initialSessionOrderRef.current = sessions?.map(session => session.id) || [];
+    },
+    [sessions]
+  );
+
+  const handleSessionDragOver = useCallback(
+    (event: React.DragEvent<HTMLDivElement>, targetId: string) => {
+      event.preventDefault();
+      if (!draggedSessionId) return;
+      setDragOverSessionId(targetId);
+      moveDraggedSession(targetId);
+    },
+    [draggedSessionId, moveDraggedSession]
+  );
+
+  const handleSessionListEmptySpaceDragOver = useCallback(
+    (event: React.DragEvent<HTMLDivElement>) => {
+      if (event.target !== event.currentTarget) return;
+      event.preventDefault();
+      if (!draggedSessionId) return;
+      setDragOverSessionId(null);
+      moveDraggedSession(null);
+    },
+    [draggedSessionId, moveDraggedSession]
+  );
+
+  const persistSessionOrder = useCallback(
+    async (orderedIds: string[]) => {
+      setIsSavingSessionOrder(true);
+      try {
+        await reorderSessions(orderedIds);
+      } catch (err) {
+        console.error('Failed to reorder sessions', err);
+        alert('Failed to save session order. Restoring previous order.');
+        await loadSessions();
+      } finally {
+        setIsSavingSessionOrder(false);
+      }
+    },
+    [loadSessions]
+  );
+
+  const handleSessionDrop = useCallback(
+    async (event: React.DragEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!draggedSessionId || !sessions) return;
+
+      dragAcceptedRef.current = true;
+      const newOrder = sessions.map(session => session.id);
+      const previousOrder = initialSessionOrderRef.current;
+
+      setDraggedSessionId(null);
+      setDragOverSessionId(null);
+      initialSessionOrderRef.current = [];
+
+      if (!previousOrder.length || !ordersEqual(previousOrder, newOrder)) {
+        await persistSessionOrder(newOrder);
+      }
+    },
+    [persistSessionOrder, sessions]
+  );
+
+  const handleSessionListDropOnEmptySpace = useCallback(
+    (event: React.DragEvent<HTMLDivElement>) => {
+      if (event.target !== event.currentTarget) return;
+      handleSessionDrop(event);
+    },
+    [handleSessionDrop]
+  );
+
+  const handleSessionDragEnd = useCallback(() => {
+    if (!dragAcceptedRef.current) {
+      revertSessionOrder();
+    }
+    setDraggedSessionId(null);
+    setDragOverSessionId(null);
+    initialSessionOrderRef.current = [];
+    dragAcceptedRef.current = false;
+  }, [revertSessionOrder]);
 
   // Load Rooms when session changes
   const loadRooms = useCallback(async () => {
@@ -271,18 +410,29 @@ function App() {
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-2 space-y-1">
+        <div
+          className="flex-1 overflow-y-auto px-2 space-y-1"
+          onDragOver={handleSessionListEmptySpaceDragOver}
+          onDrop={handleSessionListDropOnEmptySpace}
+        >
           {sessions.map(session => {
             const sessionStatusValue = resolveSessionStatus(session.status);
             const statusMeta = SESSION_STATUS_META[sessionStatusValue];
+            const isDragging = draggedSessionId === session.id;
+            const isDragTarget = dragOverSessionId === session.id;
             return (
               <div
                 key={session.id}
                 onClick={() => setCurrentSessionId(session.id)}
-                className={`group flex items-center justify-between px-3 py-2 rounded-md text-sm cursor-pointer transition-colors ${currentSessionId === session.id
+                draggable
+                onDragStart={(e) => handleSessionDragStart(e, session.id)}
+                onDragOver={(e) => handleSessionDragOver(e, session.id)}
+                onDrop={handleSessionDrop}
+                onDragEnd={handleSessionDragEnd}
+                className={`group flex items-center justify-between px-3 py-2 rounded-md text-sm cursor-pointer transition-colors border border-transparent ${currentSessionId === session.id
                   ? 'bg-indigo-50 text-indigo-700 font-medium'
                   : 'text-gray-600 hover:bg-gray-100'
-                  }`}
+                  } ${isDragging ? 'opacity-70' : ''} ${isDragTarget ? 'border-indigo-300 bg-indigo-50' : ''}`}
               >
                 <div className="flex items-center gap-2 truncate max-w-[140px]">
                   <span
@@ -302,6 +452,9 @@ function App() {
               </div>
             );
           })}
+          {isSavingSessionOrder && (
+            <p className="text-xs text-gray-400 text-center py-2">Saving session order...</p>
+          )}
         </div>
       </aside>
 

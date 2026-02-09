@@ -20,7 +20,8 @@ const schema = `
     id TEXT PRIMARY KEY,
     name TEXT,
     lastModified INTEGER,
-    status TEXT DEFAULT 'not_started'
+    status TEXT DEFAULT 'not_started',
+    sortOrder INTEGER DEFAULT 0
   );
 
   CREATE TABLE IF NOT EXISTS rooms (
@@ -86,6 +87,25 @@ try {
 } catch (e) {
   // ignore - table might be empty
 }
+
+try {
+  db.prepare('ALTER TABLE sessions ADD COLUMN sortOrder INTEGER DEFAULT 0').run();
+} catch (e) {
+  // Column likely exists
+}
+
+const assignMissingSortOrders = () => {
+  const sessionsNeedingOrder = db
+    .prepare('SELECT id FROM sessions WHERE sortOrder IS NULL ORDER BY lastModified DESC, id ASC')
+    .all();
+  if (!sessionsNeedingOrder.length) return;
+  const updateStmt = db.prepare('UPDATE sessions SET sortOrder = ? WHERE id = ?');
+  sessionsNeedingOrder.forEach((session, index) => {
+    updateStmt.run(index, session.id);
+  });
+};
+
+assignMissingSortOrders();
 
 try {
   db.prepare("ALTER TABLE rooms ADD COLUMN roomStatus TEXT DEFAULT 'in_progress'").run();

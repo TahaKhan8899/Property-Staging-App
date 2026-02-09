@@ -152,7 +152,7 @@ app.get('/api/health', (req, res) => {
 
 app.get('/api/sessions', (req, res) => {
     try {
-        const sessions = db.prepare('SELECT * FROM sessions ORDER BY lastModified DESC').all();
+        const sessions = db.prepare('SELECT * FROM sessions ORDER BY sortOrder ASC, lastModified DESC').all();
         res.json(sessions);
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -164,7 +164,10 @@ app.post('/api/sessions', (req, res) => {
         const { id, name, lastModified, status } = req.body;
         const safeLastModified = lastModified ?? Date.now();
         const safeStatus = normalizeSessionStatus(status);
-        db.prepare('INSERT INTO sessions (id, name, lastModified, status) VALUES (?, ?, ?, ?)').run(id, name, safeLastModified, safeStatus);
+        const highestSortOrder = db.prepare('SELECT COALESCE(MAX(sortOrder), -1) as maxOrder FROM sessions').get();
+        const nextSortOrder = (highestSortOrder?.maxOrder ?? -1) + 1;
+        db.prepare('INSERT INTO sessions (id, name, lastModified, status, sortOrder) VALUES (?, ?, ?, ?, ?)')
+            .run(id, name, safeLastModified, safeStatus, nextSortOrder);
 
         // Create folder structure immediately
         if (name) {
@@ -173,6 +176,28 @@ app.post('/api/sessions', (req, res) => {
 
         res.json({ success: true, id });
     } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.patch('/api/sessions/reorder', (req, res) => {
+    try {
+        const { orderedIds } = req.body;
+        if (!Array.isArray(orderedIds) || orderedIds.length === 0) {
+            return res.status(400).json({ error: 'orderedIds must be a non-empty array' });
+        }
+
+        const updateStmt = db.prepare('UPDATE sessions SET sortOrder = ? WHERE id = ?');
+        const transaction = db.transaction((ids) => {
+            ids.forEach((sessionId, index) => {
+                updateStmt.run(index, sessionId);
+            });
+        });
+        transaction(orderedIds);
+
+        res.json({ success: true });
+    } catch (err) {
+        console.error(err);
         res.status(500).json({ error: err.message });
     }
 });

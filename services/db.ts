@@ -46,6 +46,7 @@ export interface SessionEntity {
   name: string;
   lastModified: number;
   status: SessionStatus;
+  sortOrder?: number;
 }
 
 export const getSessions = async (): Promise<SessionEntity[]> => {
@@ -74,6 +75,11 @@ export const updateSession = async (id: string, updates: Partial<Pick<SessionEnt
 
 export const updateSessionName = async (id: string, name: string) => {
   await updateSession(id, { name });
+};
+
+export const reorderSessions = async (orderedIds: string[]) => {
+  if (!Array.isArray(orderedIds) || !orderedIds.length) return;
+  await api.patch('/sessions/reorder', { orderedIds });
 };
 
 // --- Rooms ---
