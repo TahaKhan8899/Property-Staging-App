@@ -125,4 +125,16 @@ try {
   // Column likely exists
 }
 
+try {
+  db.prepare('ALTER TABLE rooms ADD COLUMN outputSourcePath TEXT').run();
+} catch (e) {
+  // Column likely exists
+}
+
+try {
+  db.prepare('ALTER TABLE rooms ADD COLUMN outputFileName TEXT').run();
+} catch (e) {
+  // Column likely exists
+}
+
 export default db;

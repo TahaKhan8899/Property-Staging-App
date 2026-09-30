@@ -54,6 +54,9 @@ export interface RoomData {
   // Version History
   imageVersions?: ImageVersion[];
   currentVersionId?: string;
+
+  // Session-relative path (e.g. "staged/Living Room 1_v2.jpg") of the staged file copied to the output folder, if any
+  outputSourcePath?: string | null;
 }
 
 export interface Session {

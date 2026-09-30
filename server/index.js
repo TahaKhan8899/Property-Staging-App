@@ -126,6 +126,24 @@ const ensureDirectories = (sessionPath) => {
     return { original, staged, stagedCompressed };
 };
 
+// Final approved images live in <session>/output/<Room N>.<ext> (one file per room, no version suffix)
+const getOutputDir = (sessionName) => path.join(getSessionFolderPath(sessionName), 'output');
+
+// Filename this room has in output/. Rooms added before outputFileName existed fall back to the old naming.
+const getRoomOutputFileName = (room) => {
+    if (room.outputFileName) return room.outputFileName;
+    if (!room.outputSourcePath) return null;
+    return `${path.basename(room.filePath, path.extname(room.filePath))}${path.extname(room.outputSourcePath)}`;
+};
+
+// Remove only this room's own output file (never another room's, even if original names collide)
+const removeRoomOutputFile = (sessionName, room) => {
+    const fileName = getRoomOutputFileName(room);
+    if (!fileName) return;
+    const target = path.join(getOutputDir(sessionName), fileName);
+    if (fs.existsSync(target)) fs.unlinkSync(target);
+};
+
 // Configure Multer (Temp storage)
 const storage = multer.diskStorage({
     destination: (req, file, cb) => {
@@ -817,10 +835,63 @@ app.get('/api/rooms/:id/download-compressed', async (req, res) => {
     }
 });
 
+// Copy the currently displayed staged version into the session's output folder
+app.post('/api/rooms/:id/output', (req, res) => {
+    try {
+        const { id } = req.params;
+        const room = db.prepare('SELECT r.*, s.name as sessionName FROM rooms r JOIN sessions s ON r.sessionId = s.id WHERE r.id = ?').get(id);
+        if (!room) return res.status(404).json({ error: 'Room not found' });
+        if (!room.generatedImageUrl) return res.status(404).json({ error: 'No staged image found' });
+
+        const sourcePath = getUploadFilePath(room.generatedImageUrl);
+        if (!sourcePath || !fs.existsSync(sourcePath)) {
+            return res.status(404).json({ error: 'Image file not found on disk' });
+        }
+
+        const baseName = path.basename(room.filePath, path.extname(room.filePath));
+        const outputDir = getOutputDir(room.sessionName);
+        fs.mkdirSync(outputDir, { recursive: true });
+
+        // Drop this room's previous output file, then pick a name no other room is using
+        removeRoomOutputFile(room.sessionName, room);
+        const ext = path.extname(sourcePath) || '.jpg';
+        let fileName = `${baseName}${ext}`;
+        for (let n = 2; fs.existsSync(path.join(outputDir, fileName)); n++) {
+            fileName = `${baseName} (${n})${ext}`;
+        }
+        fs.copyFileSync(sourcePath, path.join(outputDir, fileName));
+
+        // Session-relative (e.g. "staged/Living Room 1_v2.jpg") so it survives session renames
+        const outputSourcePath = normalizeStoredUploadPath(room.generatedImageUrl).split('/').slice(1).join('/');
+        db.prepare('UPDATE rooms SET outputSourcePath = ?, outputFileName = ? WHERE id = ?').run(outputSourcePath, fileName, id);
+
+        res.json({ success: true, outputSourcePath, fileName });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Remove a room's image from the output folder
+app.delete('/api/rooms/:id/output', (req, res) => {
+    try {
+        const { id } = req.params;
+        const room = db.prepare('SELECT r.filePath, r.outputFileName, r.outputSourcePath, s.name as sessionName FROM rooms r JOIN sessions s ON r.sessionId = s.id WHERE r.id = ?').get(id);
+        if (!room) return res.status(404).json({ error: 'Room not found' });
+
+        removeRoomOutputFile(room.sessionName, room);
+        db.prepare('UPDATE rooms SET outputSourcePath = NULL, outputFileName = NULL WHERE id = ?').run(id);
+        res.json({ success: true });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 app.delete('/api/rooms/:id', (req, res) => {
     try {
         const { id } = req.params;
-        const room = db.prepare('SELECT filePath, generatedImageUrl FROM rooms WHERE id = ?').get(id);
+        const room = db.prepare('SELECT r.filePath, r.generatedImageUrl, r.outputFileName, r.outputSourcePath, s.name as sessionName FROM rooms r JOIN sessions s ON r.sessionId = s.id WHERE r.id = ?').get(id);
 
         db.prepare('DELETE FROM rooms WHERE id = ?').run(id);
 
@@ -835,6 +906,8 @@ app.delete('/api/rooms/:id', (req, res) => {
                 const fullPath = getUploadFilePath(room.generatedImageUrl);
                 if (fullPath && fs.existsSync(fullPath)) fs.unlinkSync(fullPath);
             }
+            // Delete Output copy
+            removeRoomOutputFile(room.sessionName, room);
         }
 
         res.json({ success: true });

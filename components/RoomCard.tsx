@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { RoomData, RoomType, ImageVersion, PromptSnapshot, RoomStatus } from '../types';
 import { generateStagingPrompt, generateReferenceAnglePrompt, generateStagedImage, refinePrompt, editGeneratedImage } from '../services/geminiService';
-import { saveGeneratedImage, getImageVersions, restoreImageVersion, uploadStagedImage } from '../services/db';
+import { saveGeneratedImage, getImageVersions, restoreImageVersion, uploadStagedImage, addRoomToOutput, removeRoomFromOutput } from '../services/db';
 import ImageCompareModal from './ImageCompareModal';
 import PromptViewerModal from './PromptViewerModal';
 
@@ -49,6 +49,7 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, referenceOptions = [], onUpda
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isCompareOpen, setIsCompareOpen] = useState(false);
   const [isPromptViewerOpen, setIsPromptViewerOpen] = useState(false);
+  const [isSavingOutput, setIsSavingOutput] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const currentVersion = versions[currentVersionIndex];
@@ -358,6 +359,44 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, referenceOptions = [], onUpda
   const handleUploadTrigger = () => {
     if (isUploadingStaged) return;
     fileInputRef.current?.click();
+  };
+
+  // "staged/Living Room 1_v2.jpg" from ".../uploads/<Session>/staged/Living%20Room%201_v2.jpg"
+  const toSessionRelativePath = (url?: string) => {
+    if (!url) return '';
+    const afterUploads = url.split('/uploads/')[1];
+    if (!afterUploads) return '';
+    let decoded = afterUploads;
+    try { decoded = decodeURIComponent(afterUploads); } catch { /* keep raw */ }
+    return decoded.split('/').slice(1).join('/');
+  };
+  const isCurrentInOutput = Boolean(room.outputSourcePath) && room.outputSourcePath === toSessionRelativePath(room.generatedImageUrl);
+  const hasStaleOutput = Boolean(room.outputSourcePath) && !isCurrentInOutput;
+
+  const handleAddToOutput = async () => {
+    if (!room.generatedImageUrl || isSavingOutput) return;
+    setIsSavingOutput(true);
+    try {
+      const { outputSourcePath } = await addRoomToOutput(room.id);
+      onUpdate(room.id, { outputSourcePath, error: undefined });
+    } catch (err) {
+      onUpdate(room.id, { error: (err as Error).message });
+    } finally {
+      setIsSavingOutput(false);
+    }
+  };
+
+  const handleRemoveFromOutput = async () => {
+    if (isSavingOutput) return;
+    setIsSavingOutput(true);
+    try {
+      await removeRoomFromOutput(room.id);
+      onUpdate(room.id, { outputSourcePath: null });
+    } catch (err) {
+      onUpdate(room.id, { error: (err as Error).message });
+    } finally {
+      setIsSavingOutput(false);
+    }
   };
 
   const handleRoomStatusChange = (nextStatus: RoomStatus) => {
@@ -830,6 +869,30 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, referenceOptions = [], onUpda
         {/* State 5: Image Done */}
         {room.generatedImageUrl && !room.isEditingImage && (
           <>
+            {isCurrentInOutput ? (
+              <button
+                onClick={handleRemoveFromOutput}
+                disabled={isSavingOutput}
+                title="This version is in the output folder. Click to remove it."
+                className="px-3 py-2 text-sm font-medium rounded-md border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 disabled:opacity-50 flex items-center gap-2"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" /></svg>
+                In Output
+              </button>
+            ) : (
+              <button
+                onClick={handleAddToOutput}
+                disabled={isSavingOutput}
+                title={hasStaleOutput ? 'A different version is in the output folder. Click to replace it with this one.' : 'Copy this version to the session output folder'}
+                className={`px-3 py-2 text-sm font-medium rounded-md border disabled:opacity-50 flex items-center gap-2 ${hasStaleOutput
+                  ? 'border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100'
+                  : 'border-gray-200 text-gray-700 hover:bg-gray-100'
+                  }`}
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" /></svg>
+                {isSavingOutput ? 'Saving...' : hasStaleOutput ? 'Replace Output' : 'Add to Output'}
+              </button>
+            )}
             {renderUploadButton('Upload Staged Image')}
             <button
               onClick={() => setIsEditingMode(!isEditingMode)}

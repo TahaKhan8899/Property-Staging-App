@@ -186,3 +186,11 @@ export const restoreImageVersion = async (roomId: string, versionId: string): Pr
 export const deleteRoom = async (id: string) => {
   await api.delete(`/rooms/${id}`);
 };
+
+export const addRoomToOutput = async (roomId: string): Promise<{ outputSourcePath: string; fileName: string }> => {
+  return await api.post(`/rooms/${roomId}/output`, {});
+};
+
+export const removeRoomFromOutput = async (roomId: string) => {
+  await api.delete(`/rooms/${roomId}/output`);
+};
