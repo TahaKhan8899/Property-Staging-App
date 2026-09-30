@@ -796,29 +796,21 @@ app.get('/api/rooms/:id/download-compressed', async (req, res) => {
         const sessionPath = getSessionFolderPath(room.sessionName);
         const { stagedCompressed } = ensureDirectories(sessionPath);
 
-        // Generate filename for download + storage
-        const originalFileName = path.basename(room.filePath);
-        const originalBase = path.basename(originalFileName, path.extname(originalFileName));
-        const downloadFileName = `${originalBase}_compressed.jpg`;
+        // Generate filename for download + storage. Rooms in a session can share an original name
+        // (e.g. two "Kitchen 3"), so the 2nd+ one gets " (2)", " (3)" by creation order.
+        const originalBase = path.basename(room.filePath, path.extname(room.filePath));
+        const sameNamed = db.prepare('SELECT id, filePath FROM rooms WHERE sessionId = ? ORDER BY rowid').all(room.sessionId)
+            .filter(r => r.filePath && path.basename(r.filePath, path.extname(r.filePath)).toLowerCase() === originalBase.toLowerCase());
+        const position = Math.max(0, sameNamed.findIndex(r => r.id === id));
+        const suffix = position > 0 ? ` (${position + 1})` : '';
+        const downloadFileName = `${originalBase}${suffix}_compressed.jpg`;
         const compressedPath = path.join(stagedCompressed, downloadFileName);
 
-        // Create compressed copy on disk if missing or source newer
-        let regenerateCompressed = true;
-        if (fs.existsSync(compressedPath)) {
-            try {
-                const sourceStat = fs.statSync(imagePath);
-                const compressedStat = fs.statSync(compressedPath);
-                regenerateCompressed = sourceStat.mtimeMs > compressedStat.mtimeMs;
-            } catch {
-                regenerateCompressed = true;
-            }
-        }
-
-        if (regenerateCompressed) {
-            await sharp(imagePath)
-                .jpeg({ quality: 50, mozjpeg: true })
-                .toFile(compressedPath);
-        }
+        // Always recompress from the currently selected version. A cached copy can be stale when an
+        // older version is restored (its mtime is older than the cached file), and it's only ~1s.
+        await sharp(imagePath)
+            .jpeg({ quality: 50, mozjpeg: true })
+            .toFile(compressedPath);
 
         // Return redirect to the compressed file so browser just opens it
         const uploadsRoot = path.join(__dirname, 'uploads');
