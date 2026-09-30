@@ -19,7 +19,7 @@ This document captures the current behavior of the WH Staging Assistant after mu
 3. **Image intake:** The “Add Rooms” palette uploads files per room type. Files are auto-renamed and stored in `server/uploads/<session>/original` with sequential numbering (e.g., `Bedroom 2.jpg`) (`server/index.js:305-375`).  
 4. **Room cards:** Each upload produces a `RoomCard` with original preview, prompt workspace, action footer, and staged output once available (`components/RoomCard.tsx`).  
 5. **Prompt generation:** Clicking **Generate Prompt** invokes Gemini 3 Pro (text model) with the designer system prompt plus optional “initial thoughts” jot sheet. Output becomes editable text with reset/regenerate/refine tools and approval gating (`components/RoomCard.tsx:550-637`).  
-6. **Render:** When a prompt is approved, **Generate Staged Image (2K)** calls the Nano Banana Pro equivalent (`gemini-3-pro-image-preview`) via streaming, surfaces interim thinking/images, then persists the resulting JPEG and version metadata (`components/RoomCard.tsx:133-199`, `services/geminiService.ts:208-330`, `server/index.js:381-451`).  
+6. **Render:** When a prompt is approved, **Generate Staged Image (2K)** calls the Nano Banana Pro equivalent (`gemini-3-pro-image`) via streaming, surfaces interim thinking/images, then persists the resulting JPEG and version metadata (`components/RoomCard.tsx:133-199`, `services/geminiService.ts:208-330`, `server/index.js:381-451`).  
 7. **Review & iteration:** Users can edit renders inline, upload replacements, hop across version history, compare original vs staged in a full-modal view, and download 2K or server-side-compressed copies (`components/RoomCard.tsx:203-701`, `components/ImageCompareModal.tsx`).  
 8. **Delivery:** Staged files live under `/uploads/<Session>/staged`. The server can emit compressed JPGs on demand via Sharp (`server/index.js:657-717`). Manual downloads open in a new tab for immediate saving.
 
@@ -57,7 +57,7 @@ This document captures the current behavior of the WH Staging Assistant after mu
 
 ### Image Generation, Editing, and Delivery
 - Streaming progress displays Gemini “thoughts” and interim images in both generate and edit flows so the user sees if the model is stuck before final output arrives (`components/RoomCard.tsx:133-199`, `467-526`).  
-- Exponential backoff with retry guards 503 errors when hitting `gemini-3-pro-image-preview`, and each render is time-boxed to five minutes (`services/geminiService.ts:208-330`).  
+- Exponential backoff with retry guards 503 errors when hitting `gemini-3-pro-image`, and each render is time-boxed to five minutes (`services/geminiService.ts:208-330`).  
 - Every render (auto or manual upload) creates an `image_versions` row, enabling previous-version restores, version navigation UI, and descriptions describing what changed (`components/RoomCard.tsx:203-241`, `server/index.js:381-520`).  
 - Users can upload staged assets from other editors (e.g., Canva), which are versioned exactly like AI renders (`server/index.js:453-525`, `components/RoomCard.tsx:220-241`).  
 - The compare modal offers full-screen, keyboard-friendly before/after toggling to inspect details before delivery (`components/ImageCompareModal.tsx:10-110`).  
@@ -101,7 +101,7 @@ These commits show the app has matured beyond an MVP script into a resilient ope
 - **Compression route:** `/api/rooms/:id/download-compressed` regenerates or reuses a `staged-compressed` file and redirects to the static asset, so the UI can simply `window.open` the link.
 
 ### AI Integration
-- **Models:** `gemini-3-pro-preview` for prompt/prompt refinements and `gemini-3-pro-image-preview` for staging & edits (constants defined in `constants.ts`).  
+- **Models:** `gemini-3.1-pro-preview` for prompt/prompt refinements and `gemini-3-pro-image` for staging & edits (constants defined in `constants.ts`).  
 - **Safety:** Each request instantiates a `GoogleGenAI` client with the latest API key, uses streaming to surface progress, and retries 503s with exponential backoff (`services/geminiService.ts:52-459`).  
 - **Prompt template:** The user prompt template enforces architectural constraints (“KEEP ALL ARCHITECTURE…”), brand palette, and contextual user notes to maximize fidelity.  
 - **Editing:** Edit instructions emphasize no structural deviation, using the same streaming architecture as the initial render.

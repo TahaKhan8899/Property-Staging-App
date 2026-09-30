@@ -127,7 +127,8 @@ export const generateStagingPrompt = async (
   let userPrompt = `
 Analyze this ${actualLabel} and generate a detailed virtual staging prompt for it.
 Follow the design rules in the system prompt.
-Keep all architectural elements AND EXPECIALLY THE CAMERA ANGLE AND PERSPECTIVE exactly the same.
+Keep all architectural elements AND ESPECIALLY THE CAMERA ANGLE AND PERSPECTIVE exactly the same.
+Study the photo's exact vantage point, field of view, and room proportions, and anchor every piece of furniture to where it appears in that frame so the staged image can be generated from the identical viewpoint.
 Output only the staging prompt text.
 `;
 
@@ -160,7 +161,8 @@ Please integrate these requests into the staging prompt while maintaining the ov
     return response.text || "Failed to generate prompt.";
   } catch (error) {
     console.error("Error generating prompt:", error);
-    throw new Error("Failed to analyze image. Please try again.");
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to analyze image: ${errorMessage}`);
   }
 };
 
@@ -178,7 +180,7 @@ export const refinePrompt = async (
 You are an expert interior designer. 
 Analyze the following staging prompt and the user's requested changes.
 Modify the prompt to incorporate the user's feedback while keeping the rest of the style, structure, and details consistent.
-Do NOT change camera angles or perspective instructions.
+Do NOT change, remove, or weaken any camera angle, perspective, or "keep exactly the same" instructions (including the ALL CAPS reinforcements in the opening, middle, and closing). Any furniture you add must be anchored to its position in the original frame and aligned to the original floor perspective.
 Output ONLY the new, complete staging prompt text.
 
 CURRENT PROMPT:
@@ -201,7 +203,8 @@ USER FEEDBACK:
     return result.text || "Failed to refine prompt.";
   } catch (error) {
     console.error("Error refining prompt:", error);
-    throw new Error("Failed to refine prompt. Please try again.");
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to refine prompt: ${errorMessage}`);
   }
 };
 
@@ -453,7 +456,8 @@ Do not add any new objects unless explicitly listed above, and do not modify arc
       throw new Error("No image data returned from model.");
     } catch (error) {
       console.error("Error editing image:", error);
-      throw new Error("Failed to edit image. Please try again.");
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      throw new Error(`Failed to edit image: ${errorMessage}`);
     }
   }, 3, 2000); // 3 retries, starting with 2 second delay
 };

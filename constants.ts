@@ -1,6 +1,6 @@
 // Models
-export const MODEL_TEXT_ANALYSIS = 'gemini-3-pro-preview';
-export const MODEL_IMAGE_GENERATION = 'gemini-3-pro-image-preview'; // Maps to "Nano Banana Pro" for 2K
+export const MODEL_TEXT_ANALYSIS = 'gemini-3.1-pro-preview';
+export const MODEL_IMAGE_GENERATION = 'gemini-3-pro-image'; // Maps to "Nano Banana Pro" for 2K
 
 // Configuration
 export const IMAGE_RESOLUTION = '2K';
@@ -72,18 +72,29 @@ ROOM-BY-ROOM GUIDELINES
 REFERENCE EXAMPLE OF AN APPROVED PROMPT
 Use the following as a reference for level of detail, structure, and tone (do not copy layout blindly, but match this style of specificity in the prompt.):
 
-"Using the attached image, virtually stage this open-concept living, dining, and kitchen space while KEEPING ALL ARCHITECTURE, CAMERA ANGLE, PERSPECTIVE, FLOORING, WINDOWS, DOORS, TRIM, FIREPLACE, CEILING LIGHTS, STAIR RAILING, BUILT-INS, AND FIXTURES EXACTLY THE SAME.
-In the main living area near the fireplace on the left, place a large light-beige modern sectional sofa facing the fireplace, positioned slightly toward the center of the room. Add a textured woven area rug beneath the seating zone, with a round warm-wood coffee table centered on it and styled with a ceramic vase and two minimal decor pieces. Place a single curved accent chair in muted sage or caramel leather angled toward the sofa. Add a tall potted plant in a modern planter in the back-left corner, keeping it clear of the built-in wet bar. Add a slim black-metal floor lamp beside the sofa for warmth.
+"Using the attached image, virtually stage this open-concept living, dining, and kitchen space while EXTREMELY STRICTLY KEEPING ALL ARCHITECTURE, CAMERA ANGLE, PERSPECTIVE, FLOORING, WINDOWS, DOORS, TRIM, FIREPLACE, CEILING LIGHTS, STAIR RAILING, BUILT-INS, AND FIXTURES EXACTLY THE SAME. IT IS CRITICAL THAT THE CAMERA ANGLE AND PERSPECTIVE DO NOT CHANGE FROM THE ORIGINAL IMAGE.
+In the main living area near the fireplace on the left, place a large light-beige modern sectional sofa facing the fireplace, positioned slightly toward the center of the room. Add a textured woven area rug beneath the seating zone, making sure it perfectly aligns with the original perspective of the floor, with a round warm-wood coffee table centered on it and styled with a ceramic vase and two minimal decor pieces. Place a single curved accent chair in muted sage or caramel leather angled toward the sofa, ENSURING THAT NONE OF THE PERSPECTIVE IS CHANGED FROM THE ORIGINAL IMAGE. Add a tall potted plant in a modern planter in the back-left corner, keeping it clear of the built-in wet bar. Add a slim black-metal floor lamp beside the sofa for warmth.
 In the middle zone under the existing chandelier, stage a compact round dining table in warm wood with four upholstered contemporary dining chairs in light gray or cream. Add a simple bowl of fruit or a small plant as the centerpiece. Keep styling minimal and clean.
 In the kitchen area, lightly style the island with a small tray, a vase with greenery, and a pair of modern counter stools in warm wood with black-metal accents. Add subtle kitchen styling on the perimeter counters such as a cutting board, a plant, and a couple of tidy, renter-friendly items. Maintain the original cabinetry, appliances, counters, and pendant lights unchanged.
-Do not add any extra cabinetry or structural changes and use the same camera angle and perspective"
+Do not add any extra cabinetry or structural changes, keep all doors, hardware, and ceiling fixtures exactly as they are. REINFORCING THAT NO EXTRA CABINETRY, DOORS, OR STRUCTURAL CHANGES ARE ADDED AND THE EXACT SAME CAMERA ANGLE AND PERSPECTIVE MUST BE MAINTAINED THROUGHOUT THE ENTIRE IMAGE."
 
 Extremely important points about the prompt: Ensure your generated prompt keeps the all caps parts where necessary to emphasize that structure, camera angle, perspective, flooring, etc. need to remain the same. Also notice that the end of the prompt reinforces that no extra cabinetry or structure or angle is added. That’s crucial for maintaining consistency to the original shot.
+
+CAMERA ANGLE AND PERSPECTIVE LOCK (THE MOST COMMON FAILURE, SO TREAT IT AS TOP PRIORITY)
+The image model tends to drift: it shifts the camera, changes the field of view or proportions, or re-frames the room. Every prompt you write must guard against this:
+- State the lock THREE times, in ALL CAPS: (1) in the opening sentence, using "EXTREMELY STRICTLY KEEPING ALL ARCHITECTURE, CAMERA ANGLE, PERSPECTIVE, ..." followed by its own sentence "IT IS CRITICAL THAT THE CAMERA ANGLE AND PERSPECTIVE DO NOT CHANGE FROM THE ORIGINAL IMAGE."; (2) once mid-prompt, attached to the placement of a large piece of furniture (for example "ENSURING THAT NONE OF THE PERSPECTIVE IS CHANGED FROM THE ORIGINAL IMAGE"); (3) in the closing sentence, "...THE EXACT SAME CAMERA ANGLE AND PERSPECTIVE MUST BE MAINTAINED THROUGHOUT THE ENTIRE IMAGE."
+- In the opening list, name the specific fixed elements you can actually see in THIS photo (for example vents, thermostat, outlets, closet doors, ceiling lights, window trim, cabinetry, appliances) in addition to the generic list.
+- Anchor every major piece to where it appears in the frame of the original photo (for example "in the right foreground", "centered on the prominent blank wall in the middle of the image", "near the left edge by the window") and to existing fixed elements, not to an abstract floor plan.
+- Rugs and all floor-level items must follow the original floor perspective (for example "making sure the rug perfectly aligns with the original perspective of the floor"). Furniture must be true to scale with the room: do not shrink or enlarge furniture to fill the frame, and do not change the proportions of the room.
+- The visible extent of the room must stay identical: nothing visible in the original (walls, doors, openings, windows, fixtures) may be hidden, cropped, moved, added, or re-framed, and furniture must not be placed where it would force the view to change.
+- Shadows and light direction must match the original photo exactly.
+- NEVER write phrases that invite a different view, such as "wider shot", "zoomed out", "showing more of the room", or a different vantage point.
 
 YOUR TASK GOING FORWARD
 - When I send you information about a new room (room type, what’s visible, desired layout, any special notes), respond with ONE final AI image prompt.
 - The prompt should:
-  - Explicitly state that the AI must KEEP ALL ARCHITECTURE, CAMERA ANGLE, PERSPECTIVE, FLOORS, WINDOWS, DOORS, APPLIANCES, AND CEILING ELEMENTS UNCHANGED.
+  - Explicitly state that the AI must EXTREMELY STRICTLY KEEP ALL ARCHITECTURE, CAMERA ANGLE, PERSPECTIVE, FLOORS, WINDOWS, DOORS, APPLIANCES, AND CEILING ELEMENTS UNCHANGED.
+  - Follow every rule in the CAMERA ANGLE AND PERSPECTIVE LOCK section above (three all-caps reinforcements, specific fixed elements named, furniture anchored to the original frame, floor items aligned to the original floor perspective).
   - Describe the furniture layout and main pieces in clear, specific detail (placement, style, color, and approximate relationships to existing elements).
   - Reinforce the brand aesthetic and color palette listed above.
   - Mention natural lighting and realistic shadows consistent with the original photo.
