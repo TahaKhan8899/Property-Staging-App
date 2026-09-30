@@ -1,5 +1,5 @@
 import { GoogleGenAI } from "@google/genai";
-import { MODEL_TEXT_ANALYSIS, MODEL_IMAGE_GENERATION, DESIGNER_SYSTEM_PROMPT, IMAGE_RESOLUTION, IMAGE_ASPECT_RATIO } from "../constants";
+import { MODEL_TEXT_ANALYSIS, MODEL_IMAGE_GENERATION, DESIGNER_SYSTEM_PROMPT, REFERENCE_ANGLE_SYSTEM_PROMPT, IMAGE_RESOLUTION, IMAGE_ASPECT_RATIO } from "../constants";
 
 // Helper to convert file or URL to base64
 export const fileToGenerativePart = async (fileOrUrl: File | string): Promise<string> => {
@@ -78,6 +78,12 @@ async function retryWithBackoff<T>(
 
   throw lastError!;
 }
+
+// Best-effort mimeType for inlineData (File.type, else guess from URL extension)
+const guessMimeType = (fileOrUrl: File | string): string => {
+  if (typeof fileOrUrl !== 'string') return fileOrUrl.type || 'image/jpeg';
+  return fileOrUrl.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg';
+};
 
 // 1. Generate Staging Prompt
 export const generateStagingPrompt = async (
@@ -166,6 +172,51 @@ Please integrate these requests into the staging prompt while maintaining the ov
   }
 };
 
+// 1.2 Generate Staging Prompt from a staged reference of the same room (different camera angle)
+// Image 1 = staged reference, Image 2 = empty target. Uses the meta-prompt workflow.
+export const generateReferenceAnglePrompt = async (
+  referenceFileOrUrl: File | string,
+  targetFileOrUrl: File | string,
+  userComments?: string
+): Promise<string> => {
+  const apiKey = getApiKey();
+  if (!apiKey) throw new Error("API Key not found. Please select or enter a valid API key.");
+
+  const ai = new GoogleGenAI({ apiKey });
+
+  const [referenceData, targetData] = await Promise.all([
+    fileToGenerativePart(referenceFileOrUrl),
+    fileToGenerativePart(targetFileOrUrl)
+  ]);
+
+  let userPrompt = 'Image 1 is the staged reference. Image 2 is the empty target. Output only the staging prompt.';
+  if (userComments && userComments.trim()) {
+    userPrompt += `\nExtra context about the images from a human: ${userComments.trim()}`;
+  }
+
+  try {
+    const response = await ai.models.generateContent({
+      model: MODEL_TEXT_ANALYSIS,
+      contents: {
+        parts: [
+          { inlineData: { mimeType: guessMimeType(referenceFileOrUrl), data: referenceData } },
+          { inlineData: { mimeType: guessMimeType(targetFileOrUrl), data: targetData } },
+          { text: userPrompt }
+        ]
+      },
+      config: {
+        systemInstruction: REFERENCE_ANGLE_SYSTEM_PROMPT,
+      }
+    });
+
+    return response.text || "Failed to generate prompt.";
+  } catch (error) {
+    console.error("Error generating reference-angle prompt:", error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to analyze images: ${errorMessage}`);
+  }
+};
+
 // 1.5 Refine Prompt
 export const refinePrompt = async (
   currentPrompt: string,
@@ -212,7 +263,8 @@ USER FEEDBACK:
 export const generateStagedImage = async (
   originalFileOrUrl: File | string,
   prompt: string,
-  onProgress?: (status: string, interimImage?: string) => void
+  onProgress?: (status: string, interimImage?: string) => void,
+  referenceFileOrUrl?: File | string // Optional staged reference (sent as Image 1, before the target)
 ): Promise<string> => {
   // Wrap the entire image generation in retry logic
   return retryWithBackoff(async () => {
@@ -236,11 +288,21 @@ export const generateStagedImage = async (
       if (originalFileOrUrl.toLowerCase().endsWith('.png')) mimeType = 'image/png';
     }
 
+    const referenceParts = referenceFileOrUrl
+      ? [{
+        inlineData: {
+          mimeType: guessMimeType(referenceFileOrUrl),
+          data: await fileToGenerativePart(referenceFileOrUrl)
+        }
+      }]
+      : [];
+
     try {
       const responseStream = await ai.models.generateContentStream({
         model: MODEL_IMAGE_GENERATION,
         contents: {
           parts: [
+            ...referenceParts,
             {
               inlineData: {
                 mimeType: mimeType,

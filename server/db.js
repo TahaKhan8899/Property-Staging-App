@@ -119,4 +119,10 @@ try {
   // ignore - table might be empty
 }
 
+try {
+  db.prepare('ALTER TABLE rooms ADD COLUMN referenceRoomId TEXT').run();
+} catch (e) {
+  // Column likely exists
+}
+
 export default db;

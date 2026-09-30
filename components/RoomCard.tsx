@@ -1,12 +1,20 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { RoomData, RoomType, ImageVersion, PromptSnapshot, RoomStatus } from '../types';
-import { generateStagingPrompt, generateStagedImage, refinePrompt, editGeneratedImage } from '../services/geminiService';
+import { generateStagingPrompt, generateReferenceAnglePrompt, generateStagedImage, refinePrompt, editGeneratedImage } from '../services/geminiService';
 import { saveGeneratedImage, getImageVersions, restoreImageVersion, uploadStagedImage } from '../services/db';
 import ImageCompareModal from './ImageCompareModal';
 import PromptViewerModal from './PromptViewerModal';
 
+export interface ReferenceOption {
+  id: string;
+  label: string;
+  url: string; // staged render of the sibling room
+  currentVersionId?: string; // which version of that room is currently displayed (= what gets sent)
+}
+
 interface RoomCardProps {
   room: RoomData;
+  referenceOptions?: ReferenceOption[]; // staged sibling rooms that can serve as Image 1
   onUpdate: (id: string, updates: Partial<RoomData>) => void;
   onRemove: (id: string) => void;
 }
@@ -25,7 +33,7 @@ const ROOM_STATUS_META: Record<RoomStatus, { label: string; dotClass: string; ac
   }
 };
 
-const RoomCard: React.FC<RoomCardProps> = ({ room, onUpdate, onRemove }) => {
+const RoomCard: React.FC<RoomCardProps> = ({ room, referenceOptions = [], onUpdate, onRemove }) => {
   const roomStatus = (room.roomStatus || 'in_progress') as RoomStatus;
   const [promptText, setPromptText] = useState(room.generatedPrompt);
   const [progressThought, setProgressThought] = useState<string>('');
@@ -44,6 +52,28 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, onUpdate, onRemove }) => {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const currentVersion = versions[currentVersionIndex];
+  // Ignore stale ids (reference room deleted or its render discarded) -> falls back to single-image flow
+  const referenceOption = referenceOptions.find(o => o.id === room.referenceRoomId);
+  const [referenceVersionLabel, setReferenceVersionLabel] = useState('');
+
+  // Resolve "Version n of m" for the selected reference so it's clear which render is sent as Image 1
+  useEffect(() => {
+    if (!referenceOption) {
+      setReferenceVersionLabel('');
+      return;
+    }
+    let cancelled = false;
+    getImageVersions(referenceOption.id)
+      .then((list: ImageVersion[]) => {
+        if (cancelled) return;
+        const idx = referenceOption.currentVersionId
+          ? list.findIndex(v => v.id === referenceOption.currentVersionId)
+          : list.length - 1;
+        setReferenceVersionLabel(idx >= 0 ? `Version ${idx + 1} of ${list.length}` : '');
+      })
+      .catch(() => { if (!cancelled) setReferenceVersionLabel(''); });
+    return () => { cancelled = true; };
+  }, [referenceOption?.id, referenceOption?.currentVersionId, referenceOption?.url]);
 
   const resolveBasePrompt = () => (room.generatedPrompt || promptText || '').trim();
   const buildPromptSnapshot = (source: string, extra: Partial<PromptSnapshot> = {}): PromptSnapshot => {
@@ -111,12 +141,18 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, onUpdate, onRemove }) => {
   const handleGeneratePrompt = async () => {
     onUpdate(room.id, { isGeneratingPrompt: true, error: undefined });
     try {
-      let prompt = await generateStagingPrompt(
-        room.file || room.previewUrl,
-        room.roomType,
-        room.customLabel,
-        room.initialThoughts
-      );
+      let prompt = referenceOption
+        ? await generateReferenceAnglePrompt(
+          referenceOption.url,
+          room.file || room.previewUrl,
+          room.initialThoughts
+        )
+        : await generateStagingPrompt(
+          room.file || room.previewUrl,
+          room.roomType,
+          room.customLabel,
+          room.initialThoughts
+        );
       // Strip opening and closing quotes if present
       prompt = prompt.replace(/^["']|["']$/g, '').trim();
       onUpdate(room.id, {
@@ -180,9 +216,13 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, onUpdate, onRemove }) => {
         (status, img) => {
           if (status) setProgressThought(status);
           if (img) setInterimImageUrl(img);
-        }
+        },
+        referenceOption?.url
       );
-      const snapshot = buildPromptSnapshot('generate');
+      const snapshot = buildPromptSnapshot(
+        'generate',
+        referenceOption ? { notes: `Reference angle: ${referenceOption.label}` } : {}
+      );
       const { url, version } = await saveGeneratedImage(room.id, imageBase64, 'Initial generation', snapshot);
       onUpdate(room.id, {
         generatedImageUrl: url,
@@ -323,6 +363,41 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, onUpdate, onRemove }) => {
   const handleRoomStatusChange = (nextStatus: RoomStatus) => {
     if (nextStatus === roomStatus) return;
     onUpdate(room.id, { roomStatus: nextStatus });
+  };
+
+  const renderReferencePicker = () => {
+    if (referenceOptions.length === 0) return null;
+    return (
+      <div className="flex items-center gap-3 self-end">
+        {referenceOption && (
+          <a
+            href={referenceOption.url}
+            target="_blank"
+            rel="noreferrer"
+            title="Image 1 sent to Gemini (click to open full size)"
+            className="flex items-center gap-2 text-xs text-gray-500 hover:text-gray-700"
+          >
+            <img
+              src={referenceOption.url}
+              alt={`Reference: ${referenceOption.label}`}
+              className="h-12 aspect-video object-cover rounded border border-gray-200"
+            />
+            {referenceVersionLabel && <span className="whitespace-nowrap">{referenceVersionLabel}</span>}
+          </a>
+        )}
+        <label className="flex items-center gap-2 text-sm text-gray-600">
+          <span className="whitespace-nowrap">Reference (same room, other angle)</span>
+          <select
+            value={referenceOption?.id || ''}
+            onChange={(e) => onUpdate(room.id, { referenceRoomId: e.target.value || null })}
+            className="rounded-md border-gray-300 bg-white text-gray-900 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm py-1 px-2 border"
+          >
+            <option value="">None (single image)</option>
+            {referenceOptions.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
+          </select>
+        </label>
+      </div>
+    );
   };
 
   const renderUploadButton = (label: string, extraClasses = '') => (
@@ -674,6 +749,7 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, onUpdate, onRemove }) => {
         {/* State 1: No Prompt Generated Yet */}
         {!room.generatedPrompt && !room.isGeneratingPrompt && (
           <div className="flex flex-col gap-2 w-full sm:w-auto items-end">
+            {renderReferencePicker()}
             <textarea
               placeholder="Initial thoughts (e.g. 'Use a mid-century style', 'Include a coffee maker')..."
               value={room.initialThoughts || ''}
@@ -695,6 +771,7 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, onUpdate, onRemove }) => {
         {/* State 2: Prompt Generated, Not Approved */}
         {room.generatedPrompt && !room.isPromptApproved && !room.isGeneratingImage && (
           <>
+            {renderReferencePicker()}
             {renderUploadButton('Upload Photo')}
             <button
               onClick={handleGeneratePrompt}

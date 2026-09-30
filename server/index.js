@@ -685,7 +685,7 @@ app.patch('/api/rooms/:id', (req, res) => {
         const allowedCols = [
             'roomType', 'customLabel', 'generatedPrompt', 'initialPrompt',
             'isGeneratingPrompt', 'isPromptApproved', 'generatedImageUrl',
-            'isGeneratingImage', 'error', 'filePath', 'roomStatus' // filePath allowed for internal update
+            'isGeneratingImage', 'error', 'filePath', 'roomStatus', 'referenceRoomId' // filePath allowed for internal update
         ];
 
         keys.forEach(k => {

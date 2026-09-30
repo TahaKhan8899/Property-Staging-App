@@ -36,6 +36,7 @@ export interface RoomData {
   roomType: RoomType;
   customLabel: string;
   roomStatus?: RoomStatus;
+  referenceRoomId?: string | null; // Staged sibling room used as Image 1 for same-room/different-angle staging
 
   // Prompt State
   initialThoughts?: string; // User's initial ideas before generation

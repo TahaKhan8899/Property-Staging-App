@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { RoomData, RoomType, SessionStatus } from './types';
 import RoomCard from './components/RoomCard';
+import type { ReferenceOption } from './components/RoomCard';
 import ApiKeySelector from './components/ApiKeySelector';
 import {
   getSessions,
@@ -385,6 +386,19 @@ function App() {
     imagesGenerated: rooms.filter(r => r.generatedImageUrl).length
   };
 
+  // Staged rooms in this session that can act as Image 1 for another room (same room, different angle).
+  // Labelled like the on-disk names: "<Room Type> <n>".
+  const roomLabels = new Map<string, string>();
+  const typeCounts: Record<string, number> = {};
+  rooms.forEach(r => {
+    const base = r.roomType === RoomType.Other ? (r.customLabel || 'Room') : r.roomType;
+    typeCounts[base] = (typeCounts[base] || 0) + 1;
+    roomLabels.set(r.id, `${base} ${typeCounts[base]}`);
+  });
+  const stagedReferenceOptions: ReferenceOption[] = rooms
+    .filter(r => r.generatedImageUrl)
+    .map(r => ({ id: r.id, label: roomLabels.get(r.id)!, url: r.generatedImageUrl!, currentVersionId: r.currentVersionId }));
+
   if (!sessions) return null; // Initial Loading
 
   return (
@@ -584,6 +598,7 @@ function App() {
                 <RoomCard
                   key={room.id}
                   room={room}
+                  referenceOptions={stagedReferenceOptions.filter(o => o.id !== room.id)}
                   onUpdate={updateRoom}
                   onRemove={removeRoom}
                 />
