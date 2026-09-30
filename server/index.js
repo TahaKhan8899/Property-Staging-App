@@ -144,6 +144,30 @@ const removeRoomOutputFile = (sessionName, room) => {
     if (fs.existsSync(target)) fs.unlinkSync(target);
 };
 
+// Next unused "<Room Type> N" index in a session. Counting rooms is not enough: after a room is
+// deleted (or its type changed) count+1 lands on a name that is still taken, and the new upload
+// overwrites that room's original. So take max(existing N) + 1 across DB rows and files on disk
+// (original/ and staged/, where files look like "Kitchen 3_v2.jpg").
+const getNextRoomIndex = (sessionId, sessionName, safeRoomType) => {
+    const escapedType = safeRoomType.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const pattern = new RegExp(`^${escapedType} (\\d+)(?:_v\\d+)?$`, 'i');
+    let maxIndex = 0;
+    const consider = (baseName) => {
+        const match = pattern.exec(baseName);
+        if (match) maxIndex = Math.max(maxIndex, parseInt(match[1], 10));
+    };
+
+    db.prepare('SELECT filePath FROM rooms WHERE sessionId = ?').all(sessionId).forEach(room => {
+        if (room.filePath) consider(path.basename(room.filePath, path.extname(room.filePath)));
+    });
+    ['original', 'staged'].forEach(subfolder => {
+        const dir = path.join(getSessionFolderPath(sessionName), subfolder);
+        if (!fs.existsSync(dir)) return;
+        fs.readdirSync(dir).forEach(file => consider(path.basename(file, path.extname(file))));
+    });
+    return maxIndex + 1;
+};
+
 // Configure Multer (Temp storage)
 const storage = multer.diskStorage({
     destination: (req, file, cb) => {
@@ -403,13 +427,12 @@ app.post('/api/rooms', upload.single('file'), (req, res) => {
 
         // 2. Determine "N"
         // Pattern: roomType equals the uploaded roomType
-        const existingRooms = db.prepare('SELECT COUNT(*) as count FROM rooms WHERE sessionId = ? AND roomType = ?').get(sessionId, roomType);
-        const nextIndex = existingRooms.count + 1;
+        const safeRoomType = sanitizeName(roomType);
+        const nextIndex = getNextRoomIndex(sessionId, session.name, safeRoomType);
 
         // 3. Generate Name
         // e.g. "Bedroom 1.jpg"
         const ext = path.extname(req.file.originalname) || '.jpg';
-        const safeRoomType = sanitizeName(roomType);
         const newFileName = `${safeRoomType} ${nextIndex}${ext}`;
 
         // 4. Move File
@@ -668,8 +691,7 @@ app.patch('/api/rooms/:id', (req, res) => {
                 const ext = path.extname(currentRoom.filePath);
 
                 // Determine next index for NEW room type
-                const countRes = db.prepare('SELECT COUNT(*) as count FROM rooms WHERE sessionId = ? AND roomType = ?').get(currentRoom.sessionId, updates.roomType);
-                const nextIndex = countRes.count + 1;
+                const nextIndex = getNextRoomIndex(currentRoom.sessionId, session.name, sanitizeName(updates.roomType));
                 const newFileName = `${updates.roomType} ${nextIndex}${ext}`;
 
                 const oldFullPath = getUploadFilePath(currentRoom.filePath);
