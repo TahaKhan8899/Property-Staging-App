@@ -1,5 +1,8 @@
-import { GoogleGenAI } from "@google/genai";
-import { MODEL_TEXT_ANALYSIS, MODEL_IMAGE_GENERATION, DESIGNER_SYSTEM_PROMPT, REFERENCE_ANGLE_SYSTEM_PROMPT, IMAGE_RESOLUTION, IMAGE_ASPECT_RATIO } from "../constants";
+import { GoogleGenAI, MediaModality } from "@google/genai";
+import type { GenerateContentResponseUsageMetadata } from "@google/genai";
+import { MODEL_TEXT_ANALYSIS, MODEL_IMAGE_GENERATION, MODEL_PRICING, DESIGNER_SYSTEM_PROMPT, REFERENCE_ANGLE_SYSTEM_PROMPT, IMAGE_RESOLUTION, IMAGE_ASPECT_RATIO } from "../constants";
+import { logApiCall } from "./db";
+import type { ApiCallLog } from "./db";
 
 // Helper to convert file or URL to base64
 export const fileToGenerativePart = async (fileOrUrl: File | string): Promise<string> => {
@@ -86,12 +89,52 @@ const guessMimeType = (fileOrUrl: File | string): string => {
   return path.endsWith('.png') ? 'image/png' : 'image/jpeg';
 };
 
+// Log one Gemini call (success or failure) with its estimated cost. Fire-and-forget:
+// a logging failure must never break staging.
+const recordApiCall = (
+  roomId: string | undefined,
+  kind: ApiCallLog['kind'],
+  model: string,
+  usage: GenerateContentResponseUsageMetadata | undefined,
+  imageCount: number,
+  error?: unknown
+) => {
+  const promptTokens = usage?.promptTokenCount ?? 0;
+  const thoughtsTokens = usage?.thoughtsTokenCount ?? 0;
+  const candidatesTokens = usage?.candidatesTokenCount ?? 0;
+  const imageDetails = usage?.candidatesTokensDetails?.filter(d => d.modality === MediaModality.IMAGE);
+  // If the per-modality breakdown is missing, an image response's candidates are almost entirely image tokens
+  const imageOutputTokens = imageDetails?.length
+    ? imageDetails.reduce((sum, d) => sum + (d.tokenCount || 0), 0)
+    : (imageCount > 0 ? candidatesTokens : 0);
+  const textOutputTokens = Math.max(0, candidatesTokens - imageOutputTokens);
+  const price = MODEL_PRICING[model];
+  const costUsd = price
+    ? (promptTokens * price.input + (textOutputTokens + thoughtsTokens) * price.textOutput + imageOutputTokens * price.imageOutput) / 1e6
+    : 0;
+
+  logApiCall({
+    roomId,
+    kind,
+    model,
+    status: error ? 'error' : 'ok',
+    error: error ? (error instanceof Error ? error.message : String(error)).slice(0, 500) : undefined,
+    promptTokens,
+    textOutputTokens,
+    thoughtsTokens,
+    imageOutputTokens,
+    imageCount,
+    costUsd
+  }).catch(err => console.warn('Failed to log API usage:', err));
+};
+
 // 1. Generate Staging Prompt
 export const generateStagingPrompt = async (
   fileOrUrl: File | string,
   roomType: string,
   customLabel?: string,
-  userComments?: string
+  userComments?: string,
+  roomId?: string
 ): Promise<string> => {
   // Re-instantiate to ensure we catch the latest API key from environment if it was just selected
   const apiKey = getApiKey();
@@ -165,8 +208,10 @@ Please integrate these requests into the staging prompt while maintaining the ov
       }
     });
 
+    recordApiCall(roomId, 'prompt', MODEL_TEXT_ANALYSIS, response.usageMetadata, 0);
     return response.text || "Failed to generate prompt.";
   } catch (error) {
+    recordApiCall(roomId, 'prompt', MODEL_TEXT_ANALYSIS, undefined, 0, error);
     console.error("Error generating prompt:", error);
     const errorMessage = error instanceof Error ? error.message : String(error);
     throw new Error(`Failed to analyze image: ${errorMessage}`);
@@ -178,7 +223,8 @@ Please integrate these requests into the staging prompt while maintaining the ov
 export const generateReferenceAnglePrompt = async (
   referenceFileOrUrl: File | string,
   targetFileOrUrl: File | string,
-  userComments?: string
+  userComments?: string,
+  roomId?: string
 ): Promise<string> => {
   const apiKey = getApiKey();
   if (!apiKey) throw new Error("API Key not found. Please select or enter a valid API key.");
@@ -210,8 +256,10 @@ export const generateReferenceAnglePrompt = async (
       }
     });
 
+    recordApiCall(roomId, 'reference_prompt', MODEL_TEXT_ANALYSIS, response.usageMetadata, 0);
     return response.text || "Failed to generate prompt.";
   } catch (error) {
+    recordApiCall(roomId, 'reference_prompt', MODEL_TEXT_ANALYSIS, undefined, 0, error);
     console.error("Error generating reference-angle prompt:", error);
     const errorMessage = error instanceof Error ? error.message : String(error);
     throw new Error(`Failed to analyze images: ${errorMessage}`);
@@ -221,7 +269,8 @@ export const generateReferenceAnglePrompt = async (
 // 1.5 Refine Prompt
 export const refinePrompt = async (
   currentPrompt: string,
-  userFeedback: string
+  userFeedback: string,
+  roomId?: string
 ): Promise<string> => {
   const apiKey = getApiKey();
   if (!apiKey) throw new Error("API Key not found.");
@@ -252,8 +301,10 @@ USER FEEDBACK:
         }
       ]
     });
+    recordApiCall(roomId, 'refine', MODEL_TEXT_ANALYSIS, result.usageMetadata, 0);
     return result.text || "Failed to refine prompt.";
   } catch (error) {
+    recordApiCall(roomId, 'refine', MODEL_TEXT_ANALYSIS, undefined, 0, error);
     console.error("Error refining prompt:", error);
     const errorMessage = error instanceof Error ? error.message : String(error);
     throw new Error(`Failed to refine prompt: ${errorMessage}`);
@@ -265,7 +316,8 @@ export const generateStagedImage = async (
   originalFileOrUrl: File | string,
   prompt: string,
   onProgress?: (status: string, interimImage?: string) => void,
-  referenceFileOrUrl?: File | string // Optional staged reference (sent as Image 1, before the target)
+  referenceFileOrUrl?: File | string, // Optional staged reference (sent as Image 1, before the target)
+  roomId?: string
 ): Promise<string> => {
   // Wrap the entire image generation in retry logic
   return retryWithBackoff(async () => {
@@ -298,6 +350,8 @@ export const generateStagedImage = async (
       }]
       : [];
 
+    let usage: GenerateContentResponseUsageMetadata | undefined;
+    let logged = false;
     try {
       const responseStream = await ai.models.generateContentStream({
         model: MODEL_IMAGE_GENERATION,
@@ -324,6 +378,7 @@ export const generateStagedImage = async (
       let finalImageBase64: string | null = null;
 
       for await (const chunk of responseStream) {
+        if (chunk.usageMetadata) usage = chunk.usageMetadata;
         const candidates = chunk.candidates;
         if (candidates && candidates.length > 0) {
           for (const part of candidates[0].content.parts) {
@@ -361,6 +416,8 @@ export const generateStagedImage = async (
       }
 
       if (finalImageBase64) {
+        recordApiCall(roomId, 'generate', MODEL_IMAGE_GENERATION, usage, 1);
+        logged = true;
         // Convert to JPG client-side
         return await new Promise((resolve, reject) => {
           const img = new Image();
@@ -387,6 +444,7 @@ export const generateStagedImage = async (
 
       throw new Error("No image data returned from model.");
     } catch (error) {
+      if (!logged) recordApiCall(roomId, 'generate', MODEL_IMAGE_GENERATION, usage, 0, error);
       console.error("Error generating staged image:", error);
       // Provide more detailed error information
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -399,7 +457,8 @@ export const generateStagedImage = async (
 export const editGeneratedImage = async (
   generatedImageUrl: string,
   editInstructions: string,
-  onProgress?: (status: string, interimImage?: string) => void
+  onProgress?: (status: string, interimImage?: string) => void,
+  roomId?: string
 ): Promise<string> => {
   // Wrap the entire image editing in retry logic
   return retryWithBackoff(async () => {
@@ -441,6 +500,8 @@ Wall art, shelving, rugs, bedding, and any other item not listed above, includin
 
 Do not add any new objects unless explicitly listed above, and do not modify architecture or change the scene in any other way.`;
 
+    let usage: GenerateContentResponseUsageMetadata | undefined;
+    let logged = false;
     try {
       const responseStream = await ai.models.generateContentStream({
         model: MODEL_IMAGE_GENERATION,
@@ -466,6 +527,7 @@ Do not add any new objects unless explicitly listed above, and do not modify arc
       let finalImageBase64: string | null = null;
 
       for await (const chunk of responseStream) {
+        if (chunk.usageMetadata) usage = chunk.usageMetadata;
         const candidates = chunk.candidates;
         if (candidates && candidates.length > 0) {
           for (const part of candidates[0].content.parts) {
@@ -494,6 +556,8 @@ Do not add any new objects unless explicitly listed above, and do not modify arc
       }
 
       if (finalImageBase64) {
+        recordApiCall(roomId, 'edit', MODEL_IMAGE_GENERATION, usage, 1);
+        logged = true;
         // Convert to JPG client-side
         return await new Promise((resolve, reject) => {
           const img = new Image();
@@ -520,6 +584,7 @@ Do not add any new objects unless explicitly listed above, and do not modify arc
 
       throw new Error("No image data returned from model.");
     } catch (error) {
+      if (!logged) recordApiCall(roomId, 'edit', MODEL_IMAGE_GENERATION, usage, 0, error);
       console.error("Error editing image:", error);
       const errorMessage = error instanceof Error ? error.message : String(error);
       throw new Error(`Failed to edit image: ${errorMessage}`);

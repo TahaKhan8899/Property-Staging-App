@@ -378,6 +378,53 @@ app.delete('/api/sessions/:id', (req, res) => {
     }
 });
 
+// --- API Usage / Cost Tracking ---
+
+app.post('/api/usage', (req, res) => {
+    try {
+        const c = req.body || {};
+        // Resolve session from the room so the client only needs to know roomId
+        const session = c.roomId
+            ? db.prepare('SELECT s.id, s.name FROM rooms r JOIN sessions s ON s.id = r.sessionId WHERE r.id = ?').get(c.roomId)
+            : null;
+        db.prepare(`
+            INSERT INTO api_calls (id, timestamp, sessionId, sessionName, roomId, kind, model, status, error,
+                promptTokens, textOutputTokens, thoughtsTokens, imageOutputTokens, imageCount, costUsd)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+            crypto.randomUUID(), Date.now(), session?.id ?? null, session?.name ?? null, c.roomId ?? null,
+            c.kind, c.model, c.status, c.error ?? null,
+            c.promptTokens ?? 0, c.textOutputTokens ?? 0, c.thoughtsTokens ?? 0, c.imageOutputTokens ?? 0,
+            c.imageCount ?? 0, c.costUsd ?? 0
+        );
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.get('/api/sessions/:id/usage', (req, res) => {
+    try {
+        const { id } = req.params;
+        const totals = db.prepare(`
+            SELECT COUNT(*) AS calls, COALESCE(SUM(costUsd), 0) AS costUsd,
+                   COALESCE(SUM(status = 'error'), 0) AS failedCalls
+            FROM api_calls WHERE sessionId = ?
+        `).get(id);
+        const byKind = db.prepare(`
+            SELECT kind, model, COUNT(*) AS calls, SUM(costUsd) AS costUsd
+            FROM api_calls WHERE sessionId = ? GROUP BY kind, model ORDER BY costUsd DESC
+        `).all(id);
+        const byRoom = db.prepare(`
+            SELECT roomId, COUNT(*) AS calls, SUM(costUsd) AS costUsd
+            FROM api_calls WHERE sessionId = ? GROUP BY roomId
+        `).all(id);
+        res.json({ ...totals, byKind, byRoom });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // --- Rooms ---
 
 app.get('/api/sessions/:id/rooms', (req, res) => {

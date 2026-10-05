@@ -194,3 +194,38 @@ export const addRoomToOutput = async (roomId: string): Promise<{ outputSourcePat
 export const removeRoomFromOutput = async (roomId: string) => {
   await api.delete(`/rooms/${roomId}/output`);
 };
+
+// --- API Usage / Cost Tracking ---
+
+export interface ApiCallLog {
+  roomId?: string;
+  kind: 'prompt' | 'reference_prompt' | 'refine' | 'generate' | 'edit';
+  model: string;
+  status: 'ok' | 'error';
+  error?: string;
+  promptTokens: number;
+  textOutputTokens: number;
+  thoughtsTokens: number;
+  imageOutputTokens: number;
+  imageCount: number;
+  costUsd: number;
+}
+
+export interface SessionUsage {
+  calls: number;
+  costUsd: number;
+  failedCalls: number;
+  byKind: { kind: string; model: string; calls: number; costUsd: number }[];
+  byRoom: { roomId: string; calls: number; costUsd: number }[];
+}
+
+export const USAGE_LOGGED_EVENT = 'api-usage-logged';
+
+export const logApiCall = async (call: ApiCallLog) => {
+  await api.post('/usage', call);
+  window.dispatchEvent(new Event(USAGE_LOGGED_EVENT));
+};
+
+export const getSessionUsage = async (sessionId: string): Promise<SessionUsage> => {
+  return await api.get(`/sessions/${sessionId}/usage`);
+};

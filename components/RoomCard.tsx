@@ -15,6 +15,7 @@ export interface ReferenceOption {
 interface RoomCardProps {
   room: RoomData;
   referenceOptions?: ReferenceOption[]; // staged sibling rooms that can serve as Image 1
+  apiUsage?: { calls: number; costUsd: number }; // logged Gemini spend for this room
   onUpdate: (id: string, updates: Partial<RoomData>) => void;
   onRemove: (id: string) => void;
 }
@@ -33,7 +34,7 @@ const ROOM_STATUS_META: Record<RoomStatus, { label: string; dotClass: string; ac
   }
 };
 
-const RoomCard: React.FC<RoomCardProps> = ({ room, referenceOptions = [], onUpdate, onRemove }) => {
+const RoomCard: React.FC<RoomCardProps> = ({ room, referenceOptions = [], apiUsage, onUpdate, onRemove }) => {
   const roomStatus = (room.roomStatus || 'in_progress') as RoomStatus;
   const [promptText, setPromptText] = useState(room.generatedPrompt);
   const [progressThought, setProgressThought] = useState<string>('');
@@ -146,13 +147,15 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, referenceOptions = [], onUpda
         ? await generateReferenceAnglePrompt(
           referenceOption.url,
           room.file || room.previewUrl,
-          room.initialThoughts
+          room.initialThoughts,
+          room.id
         )
         : await generateStagingPrompt(
           room.file || room.previewUrl,
           room.roomType,
           room.customLabel,
-          room.initialThoughts
+          room.initialThoughts,
+          room.id
         );
       // Strip opening and closing quotes if present
       prompt = prompt.replace(/^["']|["']$/g, '').trim();
@@ -184,7 +187,7 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, referenceOptions = [], onUpda
 
     setIsRefining(true);
     try {
-      const newPrompt = await refinePrompt(promptText, refineText);
+      const newPrompt = await refinePrompt(promptText, refineText, room.id);
       setPromptText(newPrompt);
       setRefineText(''); // Clear input after success
       onUpdate(room.id, { generatedPrompt: newPrompt });
@@ -218,7 +221,8 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, referenceOptions = [], onUpda
           if (status) setProgressThought(status);
           if (img) setInterimImageUrl(img);
         },
-        referenceOption?.url
+        referenceOption?.url,
+        room.id
       );
       const snapshot = buildPromptSnapshot(
         'generate',
@@ -256,7 +260,8 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, referenceOptions = [], onUpda
         (status, img) => {
           if (status) setProgressThought(status);
           if (img) setInterimImageUrl(img);
-        }
+        },
+        room.id
       );
       const editInstruction = editText;
       const snapshot = buildPromptSnapshot('edit', { editInstruction });
@@ -492,6 +497,11 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, referenceOptions = [], onUpda
           )}
         </div>
         <div className="flex flex-wrap items-center gap-2 md:justify-end">
+          {apiUsage && (
+            <span className="text-xs text-gray-500 whitespace-nowrap" title="Logged Gemini API spend for this room">
+              ${apiUsage.costUsd.toFixed(2)} · {apiUsage.calls} calls
+            </span>
+          )}
           <div className="flex flex-wrap gap-2 justify-end">
             {ROOM_STATUS_ORDER.map(statusOption => {
               const meta = ROOM_STATUS_META[statusOption];

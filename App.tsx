@@ -13,9 +13,11 @@ import {
   getRoomsForSession,
   updateRoom as updateRoomInDB,
   deleteRoom,
-  reorderSessions
+  reorderSessions,
+  getSessionUsage,
+  USAGE_LOGGED_EVENT
 } from './services/db';
-import type { SessionEntity } from './services/db';
+import type { SessionEntity, SessionUsage } from './services/db';
 
 const SESSION_STATUS_META: Record<SessionStatus, { label: string; dotClass: string; activeClasses: string }> = {
   not_started: {
@@ -96,6 +98,25 @@ function App() {
       init();
     }
   }, [sessions, currentSessionId]);
+
+  // Gemini spend for the current session; refreshed whenever a call is logged
+  const [usage, setUsage] = useState<SessionUsage | null>(null);
+  useEffect(() => {
+    if (!currentSessionId) return;
+    let cancelled = false;
+    const refresh = () => {
+      getSessionUsage(currentSessionId)
+        .then(u => { if (!cancelled) setUsage(u); })
+        .catch(err => console.warn('Failed to load usage:', err));
+    };
+    setUsage(null);
+    refresh();
+    window.addEventListener(USAGE_LOGGED_EVENT, refresh);
+    return () => {
+      cancelled = true;
+      window.removeEventListener(USAGE_LOGGED_EVENT, refresh);
+    };
+  }, [currentSessionId]);
 
   const currentSession = sessions?.find(s => s.id === currentSessionId);
   const currentSessionStatus = resolveSessionStatus(currentSession?.status);
@@ -483,6 +504,14 @@ function App() {
                 <span>{stats.total} Rooms</span>
                 <span>{stats.promptsGenerated} Prompts</span>
                 <span>{stats.imagesGenerated} Renders</span>
+                {usage && (
+                  <span
+                    className="font-medium text-gray-700"
+                    title={usage.byKind.map(k => `${k.kind} (${k.model}): ${k.calls} calls, $${k.costUsd.toFixed(2)}`).join('\n') || 'No API calls logged yet'}
+                  >
+                    API cost ${usage.costUsd.toFixed(2)} · {usage.calls} calls{usage.failedCalls > 0 ? ` (${usage.failedCalls} failed)` : ''}
+                  </span>
+                )}
               </p>
             </div>
             <div className="flex flex-col gap-2 lg:items-end">
@@ -599,6 +628,7 @@ function App() {
                   key={room.id}
                   room={room}
                   referenceOptions={stagedReferenceOptions.filter(o => o.id !== room.id)}
+                  apiUsage={usage?.byRoom.find(r => r.roomId === room.id)}
                   onUpdate={updateRoom}
                   onRemove={removeRoom}
                 />

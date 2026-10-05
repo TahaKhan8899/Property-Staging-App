@@ -2,6 +2,14 @@
 export const MODEL_TEXT_ANALYSIS = 'gemini-3.1-pro-preview';
 export const MODEL_IMAGE_GENERATION = 'gemini-3-pro-image'; // Maps to "Nano Banana Pro" for 2K
 
+// USD per 1M tokens (standard tier, prompts <=200k), from ai.google.dev/gemini-api/docs/pricing (Oct 2026).
+// Thinking tokens bill at the text output rate. Used only for cost estimates in the usage log.
+export const MODEL_PRICING: Record<string, { input: number; textOutput: number; imageOutput: number }> = {
+  'gemini-3.1-pro-preview': { input: 2, textOutput: 12, imageOutput: 0 },
+  'gemini-3-pro-image': { input: 2, textOutput: 12, imageOutput: 120 },     // $0.134 per 1K/2K image
+  'gemini-3.1-flash-image': { input: 0.5, textOutput: 3, imageOutput: 60 }, // $0.101 per 2K image
+};
+
 // Configuration
 export const IMAGE_RESOLUTION = '2K';
 export const IMAGE_ASPECT_RATIO = '16:9';

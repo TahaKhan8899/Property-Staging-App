@@ -53,6 +53,27 @@ const schema = `
     promptSnapshot TEXT,
     FOREIGN KEY(roomId) REFERENCES rooms(id) ON DELETE CASCADE
   );
+
+  -- One row per Gemini API call (including failures) for cost tracking.
+  -- No foreign keys: spend history should survive room/session deletion.
+  CREATE TABLE IF NOT EXISTS api_calls (
+    id TEXT PRIMARY KEY,
+    timestamp INTEGER,
+    sessionId TEXT,
+    sessionName TEXT,
+    roomId TEXT,
+    kind TEXT,            -- prompt | reference_prompt | refine | generate | edit
+    model TEXT,
+    status TEXT,          -- ok | error
+    error TEXT,
+    promptTokens INTEGER,
+    textOutputTokens INTEGER,
+    thoughtsTokens INTEGER,
+    imageOutputTokens INTEGER,
+    imageCount INTEGER,
+    costUsd REAL
+  );
+  CREATE INDEX IF NOT EXISTS idx_api_calls_session ON api_calls(sessionId);
 `;
 
 db.exec(schema);
