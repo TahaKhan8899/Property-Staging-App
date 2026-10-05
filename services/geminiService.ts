@@ -82,7 +82,8 @@ async function retryWithBackoff<T>(
 // Best-effort mimeType for inlineData (File.type, else guess from URL extension)
 const guessMimeType = (fileOrUrl: File | string): string => {
   if (typeof fileOrUrl !== 'string') return fileOrUrl.type || 'image/jpeg';
-  return fileOrUrl.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg';
+  const path = fileOrUrl.split(/[?#]/)[0].toLowerCase();
+  return path.endsWith('.png') ? 'image/png' : 'image/jpeg';
 };
 
 // 1. Generate Staging Prompt
@@ -436,6 +437,8 @@ Existing furniture, décor, materials, and object placement
 
 Color palette and overall composition
 
+Wall art, shelving, rugs, bedding, and any other item not listed above, including their color, style, and position
+
 Do not add any new objects unless explicitly listed above, and do not modify architecture or change the scene in any other way.`;
 
     try {
@@ -445,7 +448,7 @@ Do not add any new objects unless explicitly listed above, and do not modify arc
           parts: [
             {
               inlineData: {
-                mimeType: 'image/jpeg',
+                mimeType: guessMimeType(generatedImageUrl),
                 data: base64Data
               }
             },

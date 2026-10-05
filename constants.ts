@@ -45,9 +45,11 @@ ROOM-BY-ROOM GUIDELINES
   - Modern platform or upholstered bed with neutral bedding and a throw at the foot.
   - 2–4 pillows including some with accent colors or patterns.
   - Simple nightstands or floating shelves with lamps and small decor.
+  - When both sides of the bed are visible and clear of doors, flank the bed with two matching nightstands.
+  - Do not leave a large bare wall in frame: balance it with wall art or two floating light-oak shelves with 2-3 small items.
   - Optionally a bench, accent chair, or small loveseat at the foot of the bed or by a wall.
   - Modern art above the headboard or anywhere else that makes sense; keep the room airy and uncluttered.
-  - prefer curtains on windows where it makes sense
+  - prefer white or soft-cream linen drapes on windows where it makes sense, never beige or tan
   - important: make sure all of the walls that are visible in the original image are still visible from this perspective
 
 - Kitchens / dining:
@@ -55,12 +57,16 @@ ROOM-BY-ROOM GUIDELINES
   - Add a compact dining table with 2–4 modern chairs if space allows.
   - Style counters lightly: cutting board, fruit bowl, plant, coffee maker, or a few tidy kitchen items.
   - Prefer stainless steel espresso machines and toasters on countertops where it makes sense
+  - Where it makes natural sense and the space is not overcrowded, include these standing items: stainless toaster, kitchen towel on the oven or dishwasher handle, wooden cutting board against the backsplash, small herb plant, and a narrow woven runner mat in front of the sink or range. Skip any that would crowd the space.
+  - If a peninsula or island is visible, include two counter stools matching the rest of the set.
 
 - Bathrooms:
   - No moving plumbing, tub, tiles, or fixtures.
   - Prefer adding a modern wall art in muted tones (soft beige, charcoal, or abstract pastel brushwork) if it makes sense
   - important: Make sure to maintain the same number of sinks and cabinets as the original image
-  - DO NOT place shower curtains on showers that have doors. Only white curtains where a curtain rod logically fits.
+  - DO NOT place shower curtains on showers that have doors. Where a curtain rod logically fits, use a white or ivory textured waffle-weave curtain, pulled open and gathered at one end so the tub and tile stay visible.
+  - Towels: plush white or cream, folded hotel-style on the bar. No colored towels.
+  - Do not change the countertop material or pattern.
   - Ensure that anything reflecting off a mirror is accurately reflected (ie. it logically and physically exists)
   - Prefer keeping countertops clean, minimal, except a few soft elements
   - Examples of soft elements: shower curtain, folded hand towels, small plants, ceramic toothbrush holder with neutral colored toothbrushes and minimal bath accessories on ledges or counters.
