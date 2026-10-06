@@ -195,6 +195,9 @@ export const addRoomToOutput = async (roomId: string): Promise<{ outputSourcePat
   return await api.post(`/rooms/${roomId}/output`, {});
 };
 
+export const getSessionExportUrl = (sessionId: string, variant: 'staged' | 'compressed') =>
+  `${API_BASE}/sessions/${sessionId}/export?variant=${variant}`;
+
 export const removeRoomFromOutput = async (roomId: string) => {
   await api.delete(`/rooms/${roomId}/output`);
 };

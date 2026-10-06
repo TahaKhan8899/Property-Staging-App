@@ -15,8 +15,10 @@ import {
   deleteRoom,
   reorderSessions,
   getSessionUsage,
+  getSessionExportUrl,
   USAGE_LOGGED_EVENT
 } from './services/db';
+import { hasStaleOutput } from './services/outputState';
 import type { SessionEntity, SessionUsage } from './services/db';
 
 const SESSION_STATUS_META: Record<SessionStatus, { label: string; dotClass: string; activeClasses: string }> = {
@@ -406,6 +408,8 @@ function App() {
     promptsGenerated: rooms.filter(r => r.generatedPrompt).length,
     imagesGenerated: rooms.filter(r => r.generatedImageUrl).length
   };
+  const outputCount = rooms.filter(r => r.outputSourcePath).length;
+  const staleOutputCount = rooms.filter(hasStaleOutput).length;
 
   // Staged rooms in this session that can act as Image 1 for another room (same room, different angle).
   // Labelled like the on-disk names: "<Room Type> <n>".
@@ -513,6 +517,28 @@ function App() {
                   </span>
                 )}
               </p>
+              <div className="flex flex-wrap items-center gap-2 mt-2">
+                <span className="text-xs text-gray-500">{outputCount} image{outputCount === 1 ? '' : 's'} in output</span>
+                {(['staged', 'compressed'] as const).map(variant => (
+                  <button
+                    key={variant}
+                    type="button"
+                    disabled={!currentSessionId || outputCount === 0}
+                    onClick={() => currentSessionId && window.open(getSessionExportUrl(currentSessionId, variant), '_blank')}
+                    className="px-2.5 py-1 text-xs font-medium rounded-md border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {variant === 'staged' ? 'Download Staged ZIP' : 'Download Compressed ZIP'}
+                  </button>
+                ))}
+                {staleOutputCount > 0 && (
+                  <span
+                    className="text-xs font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2 py-0.5"
+                    title="These rooms show a different version than the copy in the output folder. Use Replace Output on the card."
+                  >
+                    {staleOutputCount} room{staleOutputCount === 1 ? '' : 's'} showing a version not in output
+                  </span>
+                )}
+              </div>
             </div>
             <div className="flex flex-col gap-2 lg:items-end">
               <span className="text-xs font-semibold text-gray-500 tracking-wide uppercase">Session Status</span>

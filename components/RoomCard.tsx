@@ -3,6 +3,7 @@ import { RoomData, RoomType, ImageVersion, PromptSnapshot, RoomStatus } from '..
 import { generateStagingPrompt, generateReferenceAnglePrompt, generateStagedImage, refinePrompt, editGeneratedImage } from '../services/geminiService';
 import { saveGeneratedImage, getImageVersions, restoreImageVersion, uploadStagedImage, addRoomToOutput, removeRoomFromOutput } from '../services/db';
 import ImageCompareModal from './ImageCompareModal';
+import { isCurrentVersionInOutput, hasStaleOutput as isOutputStale } from '../services/outputState';
 import PromptViewerModal from './PromptViewerModal';
 
 export interface ReferenceOption {
@@ -416,16 +417,8 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, referenceOptions = [], apiUsa
   };
 
   // "staged/Living Room 1_v2.jpg" from ".../uploads/<Session>/staged/Living%20Room%201_v2.jpg"
-  const toSessionRelativePath = (url?: string) => {
-    if (!url) return '';
-    const afterUploads = url.split('/uploads/')[1];
-    if (!afterUploads) return '';
-    let decoded = afterUploads;
-    try { decoded = decodeURIComponent(afterUploads); } catch { /* keep raw */ }
-    return decoded.split('/').slice(1).join('/');
-  };
-  const isCurrentInOutput = Boolean(room.outputSourcePath) && room.outputSourcePath === toSessionRelativePath(room.generatedImageUrl);
-  const hasStaleOutput = Boolean(room.outputSourcePath) && !isCurrentInOutput;
+  const isCurrentInOutput = isCurrentVersionInOutput(room);
+  const hasStaleOutput = isOutputStale(room);
 
   const handleAddToOutput = async () => {
     if (!room.generatedImageUrl || isSavingOutput) return;

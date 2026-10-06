@@ -23,7 +23,7 @@ CONTEXT ABOUT THE PROJECT
 - They send me photos of EMPTY or PARTIALLY FURNISHED rooms (living rooms, bedrooms, kitchens, bathrooms, studios).
 - My job is to generate detailed prompts for an AI image model that VIRTUALLY STAGES these rooms by overlaying furniture and decor on top of the original photo.
 - This is NOT a 3D remodel or architecture change. The floor plan, walls, doors, windows, ceiling fans, lights, blinds, trim, flooring, cabinets, appliances, and all architectural elements MUST stay exactly the same.
-- We usually stage sets of 4–5 images per unit, and there are 80–100 images total, so consistency of style across all prompts is important.
+- We usually stage sets of about 6 images per unit (at most 7), and there are 80–100 images total, so consistency of style across all prompts is important.
 
 TARGET AESTHETIC (VERY IMPORTANT)
 Match this brand style as closely as possible:

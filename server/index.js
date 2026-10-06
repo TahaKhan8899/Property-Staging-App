@@ -6,6 +6,7 @@ import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
 import sharp from 'sharp';
+import { ZipArchive } from 'archiver';
 import { fileURLToPath, URL } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -110,6 +111,9 @@ const parsePromptSnapshot = (raw) => {
         return null;
     }
 };
+
+// Delivery compression shared by the per-image download and the compressed zip, so both stay identical
+const compressForDelivery = (inputPath) => sharp(inputPath).jpeg({ quality: 50, mozjpeg: true });
 
 // Get Session Folder Path
 const getSessionFolderPath = (sessionName) => {
@@ -377,6 +381,54 @@ app.delete('/api/sessions/:id', (req, res) => {
         res.json({ success: true });
     } catch (err) {
         res.status(500).json({ error: err.message });
+    }
+});
+
+// Download the session's output/ folder as one zip: staged files as-is, or compressed for delivery
+app.get('/api/sessions/:id/export', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const variant = req.query.variant === 'compressed' ? 'compressed' : 'staged';
+        const session = db.prepare('SELECT name FROM sessions WHERE id = ?').get(id);
+        if (!session) return res.status(404).json({ error: 'Session not found' });
+
+        const outputDir = getOutputDir(session.name);
+        const files = fs.existsSync(outputDir)
+            ? fs.readdirSync(outputDir).filter(f => !f.startsWith('.') && fs.statSync(path.join(outputDir, f)).isFile()).sort()
+            : [];
+        if (files.length === 0) return res.status(404).json({ error: 'No images in output' });
+
+        const zipName = `${sanitizeName(session.name)} - ${variant === 'compressed' ? 'Compressed' : 'Staged'}.zip`;
+        res.setHeader('Content-Type', 'application/zip');
+        res.setHeader('Content-Disposition', `attachment; filename="${zipName}"; filename*=UTF-8''${encodeURIComponent(zipName)}`);
+
+        const archive = new ZipArchive({ zlib: { level: 0 } }); // JPEGs don't deflate; store is faster
+        archive.on('error', (err) => {
+            console.error('Export zip error:', err);
+            res.destroy(err);
+        });
+        archive.pipe(res);
+
+        const usedNames = new Set();
+        for (const file of files) {
+            const filePath = path.join(outputDir, file);
+            if (variant === 'compressed') {
+                // Compressed output is always JPEG, so keep the name but use .jpg ("Kitchen 1.png" and
+                // "Kitchen 1.jpg" can both be in output/, so suffix a repeat)
+                const base = path.basename(file, path.extname(file));
+                let name = `${base}.jpg`;
+                for (let n = 2; usedNames.has(name.toLowerCase()); n++) name = `${base} (${n}).jpg`;
+                usedNames.add(name.toLowerCase());
+                archive.append(await compressForDelivery(filePath).toBuffer(), { name });
+            } else {
+                archive.file(filePath, { name: file });
+            }
+        }
+        await archive.finalize();
+    } catch (err) {
+        console.error('Export error:', err);
+        if (!res.headersSent) res.status(500).json({ error: err.message });
+        else res.destroy(err);
     }
 });
 
@@ -879,9 +931,7 @@ app.get('/api/rooms/:id/download-compressed', async (req, res) => {
 
         // Always recompress from the currently selected version. A cached copy can be stale when an
         // older version is restored (its mtime is older than the cached file), and it's only ~1s.
-        await sharp(imagePath)
-            .jpeg({ quality: 50, mozjpeg: true })
-            .toFile(compressedPath);
+        await compressForDelivery(imagePath).toFile(compressedPath);
 
         // Return redirect to the compressed file so browser just opens it
         const relativeCompressedPath = path.relative(UPLOADS_ROOT, compressedPath).replace(/\\/g, '/');

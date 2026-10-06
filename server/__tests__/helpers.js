@@ -39,7 +39,7 @@ export const toDataUrl = (buf) => `data:image/jpeg;base64,${buf.toString('base64
 
 let counter = 0;
 export const createSession = async (app, name = `Set ${++counter}`) => {
-    const id = `s-${name}-${counter++}`;
+    const id = `s-${counter++}`;
     await request(app).post('/api/sessions').send({ id, name }).expect(200);
     return { id, name };
 };
