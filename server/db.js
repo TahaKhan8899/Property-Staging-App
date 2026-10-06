@@ -5,8 +5,9 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Ensure we put the DB in the root project folder, not inside /server
-const dbPath = path.resolve(__dirname, '../database.sqlite');
+// Ensure we put the DB in the root project folder, not inside /server.
+// STAGING_DB_PATH lets tests point at a temp file.
+const dbPath = process.env.STAGING_DB_PATH || path.resolve(__dirname, '../database.sqlite');
 const db = new Database(dbPath);
 
 console.log(`Connected to SQLite database at ${dbPath}`);

@@ -9,9 +9,11 @@ npm run dev        # Start both frontend (port 3000) and backend (port 3001) con
 npm run server     # Start only the Express backend on port 3001
 npm run build      # Build frontend for production (Vite)
 npm run preview    # Preview production build
+npm test           # Vitest: server integration tests (temp DB + uploads), prompt-builder and system-prompt guard tests
+npm run test:watch # Vitest in watch mode
 ```
 
-No linting or test commands are configured — the project has no test framework.
+**Before committing:** `npx tsc --noEmit -p tsconfig.json` and `npm test` must both pass. Tests never touch the real `database.sqlite` or `server/uploads` (they use `STAGING_DB_PATH` / `STAGING_UPLOADS_ROOT` temp paths) and never call Gemini. No linter is configured.
 
 ## Architecture
 

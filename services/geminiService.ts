@@ -1,5 +1,5 @@
 import { GoogleGenAI, MediaModality } from "@google/genai";
-import type { GenerateContentResponseUsageMetadata } from "@google/genai";
+import type { GenerateContentResponse, GenerateContentResponseUsageMetadata } from "@google/genai";
 import { MODEL_TEXT_ANALYSIS, MODEL_IMAGE_GENERATION, MODEL_PRICING, DESIGNER_SYSTEM_PROMPT, REFERENCE_ANGLE_SYSTEM_PROMPT, IMAGE_RESOLUTION, IMAGE_ASPECT_RATIO } from "../constants";
 import { logApiCall } from "./db";
 import type { ApiCallLog } from "./db";
@@ -83,21 +83,90 @@ async function retryWithBackoff<T>(
 }
 
 // Best-effort mimeType for inlineData (File.type, else guess from URL extension)
-const guessMimeType = (fileOrUrl: File | string): string => {
+export const guessMimeType = (fileOrUrl: File | string): string => {
   if (typeof fileOrUrl !== 'string') return fileOrUrl.type || 'image/jpeg';
   const path = fileOrUrl.split(/[?#]/)[0].toLowerCase();
   return path.endsWith('.png') ? 'image/png' : 'image/jpeg';
 };
 
-// Log one Gemini call (success or failure) with its estimated cost. Fire-and-forget:
-// a logging failure must never break staging.
-const recordApiCall = (
-  roomId: string | undefined,
-  kind: ApiCallLog['kind'],
+export interface InlineImage {
+  mimeType: string;
+  data: string; // base64, no data: prefix
+}
+
+// Parts for an image call: optional reference first (Image 1), then the target image, then the text
+export const buildImageParts = (target: InlineImage, text: string, reference?: InlineImage) => [
+  ...(reference ? [{ inlineData: { mimeType: reference.mimeType, data: reference.data } }] : []),
+  { inlineData: { mimeType: target.mimeType, data: target.data } },
+  { text }
+];
+
+// Wrap the user's edit instructions in the standard "change only this" template.
+// rawPrompt sends the text untouched (for prompts that already carry their own keep list).
+export const buildEditPrompt = (editInstructions: string, options: { rawPrompt?: boolean } = {}): string => {
+  if (options.rawPrompt) return editInstructions;
+  return `Generate this exact same image, but make the following specific edits only:
+
+${editInstructions}
+
+Keep everything else IDENTICAL, including but not limited to:
+
+Structural elements
+
+Camera angle
+
+Perspective
+
+Lighting and shadows
+
+Flooring, walls, windows, doors, and trim
+
+Existing furniture, décor, materials, and object placement
+
+Color palette and overall composition
+
+Wall art, shelving, rugs, bedding, and any other item not listed above, including their color, style, and position
+
+Do not add any new objects unless explicitly listed above, and do not modify architecture or change the scene in any other way.`;
+};
+
+// Read an image-model stream: thought text and interim images go to onProgress, the last
+// non-thought image is the result, and the latest usageMetadata is kept for cost logging.
+export const collectImageFromStream = async (
+  stream: AsyncIterable<GenerateContentResponse>,
+  onProgress?: (status: string, interimImage?: string) => void,
+  interimStatus = "Generating preview..."
+): Promise<{ image: string | null; usage?: GenerateContentResponseUsageMetadata }> => {
+  let image: string | null = null;
+  let usage: GenerateContentResponseUsageMetadata | undefined;
+
+  for await (const chunk of stream) {
+    if (chunk.usageMetadata) usage = chunk.usageMetadata;
+    const candidates = chunk.candidates;
+    if (!candidates || candidates.length === 0) continue;
+    for (const part of candidates[0].content?.parts ?? []) {
+      // Thoughts come back as parts with thought: true (text and/or interim images)
+      if (part.thought) {
+        if (part.text && onProgress) onProgress(part.text, undefined);
+        if (part.inlineData?.data && onProgress) {
+          const mime = part.inlineData.mimeType || 'image/png';
+          onProgress(part.text || interimStatus, `data:${mime};base64,${part.inlineData.data}`);
+        }
+      } else if (part.inlineData?.data) {
+        const mime = part.inlineData.mimeType || 'image/png';
+        image = `data:${mime};base64,${part.inlineData.data}`;
+      }
+    }
+  }
+
+  return { image, usage };
+};
+
+// Token breakdown and estimated USD cost of one call, from MODEL_PRICING
+export const computeCallCost = (
   model: string,
   usage: GenerateContentResponseUsageMetadata | undefined,
-  imageCount: number,
-  error?: unknown
+  imageCount: number
 ) => {
   const promptTokens = usage?.promptTokenCount ?? 0;
   const thoughtsTokens = usage?.thoughtsTokenCount ?? 0;
@@ -112,19 +181,27 @@ const recordApiCall = (
   const costUsd = price
     ? (promptTokens * price.input + (textOutputTokens + thoughtsTokens) * price.textOutput + imageOutputTokens * price.imageOutput) / 1e6
     : 0;
+  return { promptTokens, textOutputTokens, thoughtsTokens, imageOutputTokens, costUsd };
+};
 
+// Log one Gemini call (success or failure) with its estimated cost. Fire-and-forget:
+// a logging failure must never break staging.
+const recordApiCall = (
+  roomId: string | undefined,
+  kind: ApiCallLog['kind'],
+  model: string,
+  usage: GenerateContentResponseUsageMetadata | undefined,
+  imageCount: number,
+  error?: unknown
+) => {
   logApiCall({
     roomId,
     kind,
     model,
     status: error ? 'error' : 'ok',
     error: error ? (error instanceof Error ? error.message : String(error)).slice(0, 500) : undefined,
-    promptTokens,
-    textOutputTokens,
-    thoughtsTokens,
-    imageOutputTokens,
-    imageCount,
-    costUsd
+    ...computeCallCost(model, usage, imageCount),
+    imageCount
   }).catch(err => console.warn('Failed to log API usage:', err));
 };
 
@@ -332,23 +409,13 @@ export const generateStagedImage = async (
       }
     });
 
-    const base64Data = await fileToGenerativePart(originalFileOrUrl);
-
-    let mimeType = 'image/jpeg';
-    if (typeof originalFileOrUrl !== 'string') {
-      mimeType = originalFileOrUrl.type;
-    } else {
-      if (originalFileOrUrl.toLowerCase().endsWith('.png')) mimeType = 'image/png';
-    }
-
-    const referenceParts = referenceFileOrUrl
-      ? [{
-        inlineData: {
-          mimeType: guessMimeType(referenceFileOrUrl),
-          data: await fileToGenerativePart(referenceFileOrUrl)
-        }
-      }]
-      : [];
+    const target: InlineImage = {
+      mimeType: guessMimeType(originalFileOrUrl),
+      data: await fileToGenerativePart(originalFileOrUrl)
+    };
+    const reference: InlineImage | undefined = referenceFileOrUrl
+      ? { mimeType: guessMimeType(referenceFileOrUrl), data: await fileToGenerativePart(referenceFileOrUrl) }
+      : undefined;
 
     let usage: GenerateContentResponseUsageMetadata | undefined;
     let logged = false;
@@ -356,16 +423,7 @@ export const generateStagedImage = async (
       const responseStream = await ai.models.generateContentStream({
         model: MODEL_IMAGE_GENERATION,
         contents: {
-          parts: [
-            ...referenceParts,
-            {
-              inlineData: {
-                mimeType: mimeType,
-                data: base64Data
-              }
-            },
-            { text: `${prompt}` }
-          ]
+          parts: buildImageParts(target, prompt, reference)
         },
         config: {
           imageConfig: {
@@ -375,45 +433,9 @@ export const generateStagedImage = async (
         }
       });
 
-      let finalImageBase64: string | null = null;
-
-      for await (const chunk of responseStream) {
-        if (chunk.usageMetadata) usage = chunk.usageMetadata;
-        const candidates = chunk.candidates;
-        if (candidates && candidates.length > 0) {
-          for (const part of candidates[0].content.parts) {
-            // Check for Text (Thoughts)
-            // The SDK/API returns thoughts as text parts with a 'thought' property being true,
-            // but the SDK typing might not strictly expose 'thought' on Part yet depending on version.
-            // Based on docs: "if (part.thought)"
-            if ((part as any).thought) {
-              if (part.text && onProgress) {
-                onProgress(part.text, undefined);
-              }
-              // Check for Interim Images (InlineData inside thought)
-              if (part.inlineData && part.inlineData.data && onProgress) {
-                const mime = part.inlineData.mimeType || 'image/png';
-                const rawBase64 = `data:${mime};base64,${part.inlineData.data}`;
-                onProgress(part.text || "Generating preview...", rawBase64);
-              }
-            }
-            // Check for Final Image (InlineData NOT marked as thought, or just the last image)
-            // The docs say: "The last image within Thinking is also the final rendered image."
-            // But usually the final response part contains the result.
-            // We will look for inlineData.
-
-            if (part.inlineData && part.inlineData.data) {
-              // We'll treat every image as potentially final or interim.
-              // If it's a thought, we streamed it. 
-              // If it's NOT a thought, it's likely the final one.
-              if (!(part as any).thought) {
-                const mime = part.inlineData.mimeType || 'image/png';
-                finalImageBase64 = `data:${mime};base64,${part.inlineData.data}`;
-              }
-            }
-          }
-        }
-      }
+      const result = await collectImageFromStream(responseStream, onProgress, "Generating preview...");
+      usage = result.usage;
+      const finalImageBase64 = result.image;
 
       if (finalImageBase64) {
         recordApiCall(roomId, 'generate', MODEL_IMAGE_GENERATION, usage, 1);
@@ -472,33 +494,11 @@ export const editGeneratedImage = async (
       }
     });
 
-    // Convert the generated image URL to base64
-    const base64Data = await fileToGenerativePart(generatedImageUrl);
-
-    // Construct the edit prompt using the template
-    const editPrompt = `Generate this exact same image, but make the following specific edits only:
-
-${editInstructions}
-
-Keep everything else IDENTICAL, including but not limited to:
-
-Structural elements
-
-Camera angle
-
-Perspective
-
-Lighting and shadows
-
-Flooring, walls, windows, doors, and trim
-
-Existing furniture, décor, materials, and object placement
-
-Color palette and overall composition
-
-Wall art, shelving, rugs, bedding, and any other item not listed above, including their color, style, and position
-
-Do not add any new objects unless explicitly listed above, and do not modify architecture or change the scene in any other way.`;
+    const target: InlineImage = {
+      mimeType: guessMimeType(generatedImageUrl),
+      data: await fileToGenerativePart(generatedImageUrl)
+    };
+    const editPrompt = buildEditPrompt(editInstructions);
 
     let usage: GenerateContentResponseUsageMetadata | undefined;
     let logged = false;
@@ -506,15 +506,7 @@ Do not add any new objects unless explicitly listed above, and do not modify arc
       const responseStream = await ai.models.generateContentStream({
         model: MODEL_IMAGE_GENERATION,
         contents: {
-          parts: [
-            {
-              inlineData: {
-                mimeType: guessMimeType(generatedImageUrl),
-                data: base64Data
-              }
-            },
-            { text: editPrompt }
-          ]
+          parts: buildImageParts(target, editPrompt)
         },
         config: {
           imageConfig: {
@@ -524,36 +516,9 @@ Do not add any new objects unless explicitly listed above, and do not modify arc
         }
       });
 
-      let finalImageBase64: string | null = null;
-
-      for await (const chunk of responseStream) {
-        if (chunk.usageMetadata) usage = chunk.usageMetadata;
-        const candidates = chunk.candidates;
-        if (candidates && candidates.length > 0) {
-          for (const part of candidates[0].content.parts) {
-            // Check for Text (Thoughts)
-            if ((part as any).thought) {
-              if (part.text && onProgress) {
-                onProgress(part.text, undefined);
-              }
-              // Check for Interim Images
-              if (part.inlineData && part.inlineData.data && onProgress) {
-                const mime = part.inlineData.mimeType || 'image/png';
-                const rawBase64 = `data:${mime};base64,${part.inlineData.data}`;
-                onProgress(part.text || "Editing image...", rawBase64);
-              }
-            }
-
-            // Check for Final Image
-            if (part.inlineData && part.inlineData.data) {
-              if (!(part as any).thought) {
-                const mime = part.inlineData.mimeType || 'image/png';
-                finalImageBase64 = `data:${mime};base64,${part.inlineData.data}`;
-              }
-            }
-          }
-        }
-      }
+      const result = await collectImageFromStream(responseStream, onProgress, "Editing image...");
+      usage = result.usage;
+      const finalImageBase64 = result.image;
 
       if (finalImageBase64) {
         recordApiCall(roomId, 'edit', MODEL_IMAGE_GENERATION, usage, 1);
