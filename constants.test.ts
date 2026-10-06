@@ -32,6 +32,16 @@ describe('DESIGNER_SYSTEM_PROMPT rules from 504-201', () => {
   });
 });
 
+describe('DESIGNER_SYSTEM_PROMPT rules from 504-202', () => {
+  it('describes seating orientation in room terms, with its qualifier', () => {
+    const rule = DESIGNER_SYSTEM_PROMPT.split('\n').find(l => l.includes("seating group's facing direction"));
+    expect(rule).toBeDefined();
+    expect(rule).toContain('Where the layout allows it');
+    expect(rule).toContain('not relative to the camera');
+    expect(rule).toContain('Do not angle sofas, rugs or coffee tables toward the camera unless the room\'s layout calls for it.');
+  });
+});
+
 describe('REFERENCE_ANGLE_SYSTEM_PROMPT', () => {
   it('is unchanged from the reviewed snapshot (update the snapshot only as a deliberate act)', () => {
     expect(REFERENCE_ANGLE_SYSTEM_PROMPT).toMatchSnapshot();
