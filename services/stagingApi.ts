@@ -90,7 +90,18 @@ export const renderRoom = async (
 
 export const editRoom = async (
   roomId: string,
-  options: { instructions: string; rawPrompt?: boolean; intents?: string; onProgress?: ProgressHandler }
+  options: {
+    instructions: string;
+    rawPrompt?: boolean;
+    intents?: string;
+    baseVersionId?: string;
+    // Optional Image 1: a room in the same session (at a version, default current) or an uploaded photo
+    referenceRoomId?: string;
+    referenceVersionId?: string;
+    referenceImage?: string; // data URL
+    referenceLabel?: string;
+    onProgress?: ProgressHandler;
+  }
 ) => {
   const { onProgress, ...body } = options;
   const res = await postWithProgress<{ url: string; currentVersionId: string; version: SavedVersion }>(

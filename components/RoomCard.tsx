@@ -6,6 +6,8 @@ import ImageCompareModal from './ImageCompareModal';
 import { isCurrentVersionInOutput, hasStaleOutput as isOutputStale } from '../services/outputState';
 import PromptViewerModal from './PromptViewerModal';
 
+const EDIT_REF_UPLOAD = '__upload__';
+
 export interface ReferenceOption {
   id: string;
   label: string;
@@ -115,6 +117,64 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, referenceOptions = [], apiUsa
   const referenceImageUrl = referenceImageVersion?.url || referenceOption?.url;
   // Sent only when pinned, so the default request is unchanged
   const referenceRequest = referenceOption && pinnedReferenceVersion ? { referenceVersionId: pinnedReferenceVersion.id } : {};
+
+  // Optional reference for an edit (Image 1): '' = none, a sibling room id, or EDIT_REF_UPLOAD
+  const [editRef, setEditRef] = useState('');
+  const [editRefVersions, setEditRefVersions] = useState<ImageVersion[]>([]);
+  const [editRefVersionId, setEditRefVersionId] = useState('');
+  const [editRefFile, setEditRefFile] = useState<File | null>(null);
+  const [editRefFileUrl, setEditRefFileUrl] = useState<string | undefined>(undefined);
+  const editRefInputRef = useRef<HTMLInputElement>(null);
+
+  // Opening the edit panel pre-selects this room's reference angle, if it has one; closing it clears the reference
+  useEffect(() => {
+    if (isEditingMode) setEditRef(referenceOption?.id || '');
+    else clearEditReference();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isEditingMode]);
+
+  useEffect(() => {
+    setEditRefVersionId('');
+    if (!editRef || editRef === EDIT_REF_UPLOAD) {
+      setEditRefVersions([]);
+      return;
+    }
+    let cancelled = false;
+    getImageVersions(editRef)
+      .then((list: ImageVersion[]) => { if (!cancelled) setEditRefVersions(list); })
+      .catch(() => { if (!cancelled) setEditRefVersions([]); });
+    return () => { cancelled = true; };
+  }, [editRef]);
+
+  useEffect(() => () => { if (editRefFileUrl) URL.revokeObjectURL(editRefFileUrl); }, [editRefFileUrl]);
+
+  const clearEditReference = () => {
+    setEditRef('');
+    setEditRefVersionId('');
+    setEditRefFile(null);
+    setEditRefFileUrl(undefined);
+    if (editRefInputRef.current) editRefInputRef.current.value = '';
+  };
+
+  const editRefOption = referenceOptions.find(o => o.id === editRef);
+  const editRefVersion = editRefVersions.find(v => v.id === editRefVersionId);
+  const editRefPreviewUrl = editRef === EDIT_REF_UPLOAD ? editRefFileUrl : (editRefVersion?.url || editRefOption?.url);
+
+  const buildEditReferenceRequest = async () => {
+    if (editRef === EDIT_REF_UPLOAD && editRefFile) {
+      const referenceImage = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = () => reject(new Error('Could not read the reference photo'));
+        reader.readAsDataURL(editRefFile);
+      });
+      return { referenceImage, referenceLabel: editRefFile.name };
+    }
+    if (editRefOption) {
+      return { referenceRoomId: editRefOption.id, ...(editRefVersion ? { referenceVersionId: editRefVersion.id } : {}) };
+    }
+    return {};
+  };
 
   const resolveBasePrompt = () => (room.generatedPrompt || promptText || '').trim();
   const buildPromptSnapshot = (source: string, extra: Partial<PromptSnapshot> = {}): PromptSnapshot => {
@@ -276,6 +336,7 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, referenceOptions = [], apiUsa
       // Edits the room's current version on the server; the snapshot is recorded there
       const { url, currentVersionId } = await editRoom(room.id, {
         instructions: editText,
+        ...(await buildEditReferenceRequest()),
         onProgress: (status, img) => {
           if (status) setProgressThought(status);
           if (img) setInterimImageUrl(img);
@@ -288,6 +349,7 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, referenceOptions = [], apiUsa
       });
       setEditText('');
       setIsEditingMode(false);
+      clearEditReference();
       await loadVersions();
     } catch (err) {
       onUpdate(room.id, {
@@ -692,11 +754,59 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, referenceOptions = [], apiUsa
                       placeholder="Enter your edits (e.g., 'Make the sofa blue', 'Add a plant on the coffee table', 'Change the rug to a lighter color')"
                       className="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border h-24 resize-none"
                     />
+                    <div className="flex flex-wrap items-center gap-2 text-sm text-gray-600">
+                      <span className="whitespace-nowrap">Reference for this edit</span>
+                      <select
+                        value={editRef}
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          setEditRef(value);
+                          if (value === EDIT_REF_UPLOAD) editRefInputRef.current?.click();
+                        }}
+                        className="rounded-md border-gray-300 bg-white text-gray-900 shadow-sm sm:text-sm py-1 px-2 border"
+                      >
+                        <option value="">None</option>
+                        {referenceOptions.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
+                        <option value={EDIT_REF_UPLOAD}>{editRefFile ? `Photo: ${editRefFile.name}` : 'Upload photo...'}</option>
+                      </select>
+                      {editRefOption && editRefVersions.length > 0 && (
+                        <select
+                          value={editRefVersionId}
+                          onChange={(e) => setEditRefVersionId(e.target.value)}
+                          className="rounded-md border-gray-300 bg-white text-gray-900 shadow-sm sm:text-sm py-1 px-2 border"
+                        >
+                          <option value="">Current</option>
+                          {editRefVersions.map(v => <option key={v.id} value={v.id}>v{v.versionNumber}</option>)}
+                        </select>
+                      )}
+                      <input
+                        ref={editRefInputRef}
+                        type="file"
+                        accept="image/png,image/jpeg,image/webp"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+                          setEditRefFile(file);
+                          setEditRefFileUrl(URL.createObjectURL(file));
+                          setEditRef(EDIT_REF_UPLOAD);
+                        }}
+                      />
+                      {editRefPreviewUrl && (
+                        <img
+                          src={editRefPreviewUrl}
+                          alt="Edit reference"
+                          title="Sent as Image 1. Mention it in your edit, e.g. 'match the sofa in the reference image'."
+                          className="h-12 aspect-video object-cover rounded border border-gray-200"
+                        />
+                      )}
+                    </div>
                     <div className="flex gap-2 justify-end">
                       <button
                         onClick={() => {
                           setIsEditingMode(false);
                           setEditText('');
+                          clearEditReference();
                         }}
                         className="px-3 py-2 text-sm text-gray-500 hover:text-gray-700"
                       >
@@ -704,7 +814,7 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, referenceOptions = [], apiUsa
                       </button>
                       <button
                         onClick={handleEditImage}
-                        disabled={!editText.trim()}
+                        disabled={!editText.trim() || (editRef === EDIT_REF_UPLOAD && !editRefFile)}
                         className="inline-flex items-center px-4 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50 gap-2"
                       >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>

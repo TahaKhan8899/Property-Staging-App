@@ -313,6 +313,81 @@ describe('version targeting (1.1c)', () => {
     });
 });
 
+describe('edit references (1.2)', () => {
+    const fileB64 = (s, rel) => fs.readFileSync(path.join(ctx.uploads, s.name, rel)).toString('base64');
+
+    // Two staged angles of one room in a session: anchor has v1 + v2 (current), dependent has v1
+    const twoAngles = async () => {
+        const s = await createSession(ctx.app);
+        const anchor = await uploadRoom(ctx.app, s.id, 'Kitchen');
+        const a1 = await saveGenerated(ctx.app, anchor.id, await makeJpeg(400, 225, 21));
+        await saveGenerated(ctx.app, anchor.id, await makeJpeg(400, 225, 22));
+        const dep = await uploadRoom(ctx.app, s.id, 'Kitchen');
+        await saveGenerated(ctx.app, dep.id, await makeJpeg(400, 225, 23));
+        ctx.db.prepare('UPDATE rooms SET referenceRoomId = ? WHERE id = ?').run(anchor.id, dep.id);
+        return { s, anchor, dep, a1 };
+    };
+
+    it('sibling reference: [reference, target, text], preamble, note with version', async () => {
+        const { s, anchor, dep } = await twoAngles();
+        const res = await request(ctx.app).post(`/api/rooms/${dep.id}/edit`).send({ instructions: 'Match the sofa', referenceRoomId: anchor.id }).expect(200);
+        const parts = calls[0].req.contents.parts;
+        expect(parts).toHaveLength(3);
+        expect(parts[0].inlineData.data).toBe(fileB64(s, 'staged/Kitchen 1_v2.jpg'));
+        expect(parts[1].inlineData.data).toBe(fileB64(s, 'staged/Kitchen 2_v1.jpg'));
+        expect(parts[2].text.startsWith('Image 1 is a reference image.')).toBe(true);
+        expect(res.body.version.promptSnapshot.notes).toBe('Edit reference: Kitchen 1 v2');
+        expect(apiRows(dep.id).map(x => x.kind)).toEqual(['edit']);
+    });
+
+    it('works in either direction and with a pinned version; only referenceVersionId defaults to the reference room', async () => {
+        const { s, anchor, dep, a1 } = await twoAngles();
+        // anchor edited with the dependent as reference (reverse direction)
+        await request(ctx.app).post(`/api/rooms/${anchor.id}/edit`).send({ instructions: 'x', referenceRoomId: dep.id }).expect(200);
+        expect(calls[0].req.contents.parts[0].inlineData.data).toBe(fileB64(s, 'staged/Kitchen 2_v1.jpg'));
+        // dependent with only referenceVersionId -> its reference room at that version
+        const res = await request(ctx.app).post(`/api/rooms/${dep.id}/edit`).send({ instructions: 'x', referenceVersionId: a1.version.id }).expect(200);
+        expect(calls[1].req.contents.parts[0].inlineData.data).toBe(fileB64(s, 'staged/Kitchen 1_v1.jpg'));
+        expect(res.body.version.promptSnapshot.notes).toBe('Edit reference: Kitchen 1 v1');
+    });
+
+    it('combines with baseVersionId in the note', async () => {
+        const { anchor, dep } = await twoAngles();
+        const depV1 = ctx.db.prepare('SELECT id FROM image_versions WHERE roomId = ?').get(dep.id).id;
+        const res = await request(ctx.app).post(`/api/rooms/${dep.id}/edit`).send({ instructions: 'x', referenceRoomId: anchor.id, baseVersionId: depV1 }).expect(200);
+        expect(res.body.version.promptSnapshot.notes).toBe('Edited from v1; Edit reference: Kitchen 1 v2');
+    });
+
+    it('uploaded photo uses its real MIME type and file name', async () => {
+        const { dep } = await twoAngles();
+        const res = await request(ctx.app).post(`/api/rooms/${dep.id}/edit`)
+            .send({ instructions: 'Use this exact sectional', referenceImage: `data:image/png;base64,${png}`, referenceLabel: 'sectional.png' })
+            .expect(200);
+        const parts = calls[0].req.contents.parts;
+        expect(parts[0].inlineData).toEqual({ mimeType: 'image/png', data: png });
+        expect(res.body.version.promptSnapshot.notes).toBe('Edit reference: sectional.png');
+    });
+
+    it('rejects self, other-session, mismatched version and bad uploads with 400 and no call', async () => {
+        const { anchor, dep, a1 } = await twoAngles();
+        const other = await twoAngles();
+        await request(ctx.app).post(`/api/rooms/${dep.id}/edit`).send({ instructions: 'x', referenceRoomId: dep.id }).expect(400);
+        await request(ctx.app).post(`/api/rooms/${dep.id}/edit`).send({ instructions: 'x', referenceRoomId: other.anchor.id }).expect(400);
+        await request(ctx.app).post(`/api/rooms/${dep.id}/edit`).send({ instructions: 'x', referenceRoomId: anchor.id, referenceVersionId: other.a1.version.id }).expect(400);
+        await request(ctx.app).post(`/api/rooms/${anchor.id}/edit`).send({ instructions: 'x', referenceVersionId: a1.version.id }).expect(400); // anchor has no reference room
+        await request(ctx.app).post(`/api/rooms/${dep.id}/edit`).send({ instructions: 'x', referenceImage: 'not-a-data-url' }).expect(400);
+        expect(calls).toHaveLength(0);
+    });
+
+    it('no reference fields: same two-part request as before, even when the room has a reference room', async () => {
+        const { dep } = await twoAngles();
+        await request(ctx.app).post(`/api/rooms/${dep.id}/edit`).send({ instructions: 'Make the sofa blue' }).expect(200);
+        const parts = calls[0].req.contents.parts;
+        expect(parts).toHaveLength(2);
+        expect(parts[1].text.startsWith('Generate this exact same image')).toBe(true);
+    });
+});
+
 describe('PUT /api/rooms/:id/prompt', () => {
     it('sets generatedPrompt and approval but never initialPrompt', async () => {
         const { r } = await approvedRoom();

@@ -230,7 +230,43 @@ export const registerGeminiRoutes = (app, { db, getUploadFilePath, saveGenerated
         }
     }));
 
+    const IMAGE_DATA_URL = /^data:(image\/(?:png|jpeg|jpg|webp));base64,([A-Za-z0-9+/=]+)$/;
+
+    // Reference for an edit (Image 1). Either an uploaded photo (referenceImage data URL + referenceLabel),
+    // or a room in the same session (referenceRoomId, defaulting to the room's own reference room when only
+    // referenceVersionId is given) at referenceVersionId or its current version. Returns { error } or
+    // { reference: { image, label } | null }.
+    const resolveEditReference = (room, body) => {
+        const { referenceImage, referenceLabel, referenceVersionId } = body;
+        if (referenceImage !== undefined) {
+            const match = typeof referenceImage === 'string' && IMAGE_DATA_URL.exec(referenceImage);
+            if (!match) return { error: 'referenceImage must be a base64 PNG, JPEG or WebP data URL' };
+            const mimeType = match[1] === 'image/jpg' ? 'image/jpeg' : match[1];
+            return { reference: { image: { mimeType, data: match[2] }, label: (referenceLabel || 'uploaded photo').toString().slice(0, 100) } };
+        }
+        const refRoomId = body.referenceRoomId || (referenceVersionId ? room.referenceRoomId : null);
+        if (!refRoomId) {
+            return referenceVersionId ? { error: 'referenceVersionId given but no reference room' } : { reference: null };
+        }
+        if (refRoomId === room.id) return { error: 'A room cannot be its own edit reference' };
+        const ref = loadRoom(refRoomId);
+        if (!ref || ref.sessionId !== room.sessionId) return { error: 'referenceRoomId must be a room in the same session' };
+        const version = referenceVersionId
+            ? loadVersion(referenceVersionId, ref.id)
+            : (ref.currentVersionId ? loadVersion(ref.currentVersionId, ref.id) : null);
+        if (referenceVersionId && !version) return { error: 'referenceVersionId does not belong to the reference room' };
+        const url = version ? version.url : ref.generatedImageUrl;
+        if (!url) return { error: 'Reference room has no staged image' };
+        return {
+            reference: {
+                url,
+                label: version ? `${roomBaseName(ref)} v${version.versionNumber}` : roomBaseName(ref)
+            }
+        };
+    };
+
     // Edit the room's current render, or the version named by baseVersionId (without restoring it).
+    // An optional reference image (see resolveEditReference) is sent as Image 1.
     // rawPrompt sends instructions untouched (composed prompts, item 1.3).
     app.post('/api/rooms/:id/edit', (req, res) => runOperation(req, res, {
         kind: 'edit',
@@ -241,14 +277,17 @@ export const registerGeminiRoutes = (app, { db, getUploadFilePath, saveGenerated
             } else if (!room.generatedImageUrl) {
                 return { error: 'Room has no staged image to edit' };
             }
-            return null;
+            const { error } = resolveEditReference(room, req.body);
+            return error ? { error } : null;
         },
         execute: async ({ send, room }) => {
             const { instructions, rawPrompt, intents, baseVersionId } = req.body;
             const base = baseVersionId ? loadVersion(baseVersionId, room.id) : null;
+            const { reference } = resolveEditReference(room, req.body);
             const buffer = await gemini.editImage({
                 roomId: room.id,
                 image: readImage(base ? base.url : room.generatedImageUrl),
+                reference: reference ? (reference.image ?? readImage(reference.url)) : undefined,
                 instructions,
                 rawPrompt: Boolean(rawPrompt),
                 onProgress: progressSender(send)
@@ -260,8 +299,12 @@ export const registerGeminiRoutes = (app, { db, getUploadFilePath, saveGenerated
                 source: rawPrompt ? 'edit-composed' : 'edit',
                 editInstruction: rawPrompt && intents ? intents : instructions,
                 ...(rawPrompt ? { rawPrompt: instructions } : {}),
-                ...(base ? { notes: `Edited from v${base.versionNumber}` } : {})
             };
+            const notes = [
+                base ? `Edited from v${base.versionNumber}` : null,
+                reference ? `Edit reference: ${reference.label}` : null
+            ].filter(Boolean).join('; ');
+            if (notes) snapshot.notes = notes;
             const saved = saveGeneratedBuffer(room.id, buffer, `Edit: ${label.substring(0, 50)}`, snapshot);
             return { url: saved.url, currentVersionId: saved.version.id, version: { ...saved.version, url: saved.url } };
         }

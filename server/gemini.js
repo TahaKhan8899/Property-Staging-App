@@ -116,7 +116,14 @@ export const createGemini = ({ logCall }) => {
         renderImage: ({ roomId, image, reference, prompt, onProgress }) =>
             imageCall('generate', roomId, buildImageParts(image, prompt, reference), onProgress, 'Generating preview...'),
 
-        editImage: ({ roomId, image, instructions, rawPrompt, onProgress }) =>
-            imageCall('edit', roomId, buildImageParts(image, buildEditPrompt(instructions, { rawPrompt })), onProgress, 'Editing image...')
+        // reference (optional) is sent as Image 1, the image to edit as Image 2
+        editImage: ({ roomId, image, reference, instructions, rawPrompt, onProgress }) =>
+            imageCall(
+                'edit',
+                roomId,
+                buildImageParts(image, buildEditPrompt(instructions, { rawPrompt, withReference: Boolean(reference) }), reference),
+                onProgress,
+                'Editing image...'
+            )
     };
 };

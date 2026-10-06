@@ -16,11 +16,17 @@ export const buildImageParts = (target, text, reference) => [
   { text }
 ];
 
+export const EDIT_REFERENCE_PREAMBLE = "Image 1 is a reference image. Image 2 is the image to edit. Generate image 2 exactly the same, but make the following specific edits only. Where an edit below refers to the reference, match the furniture or decor from image 1 as closely as possible in style, color and material, placed correctly for image 2's perspective.";
+
 // Wrap the user's edit instructions in the standard "change only this" template.
+// withReference: a reference image is sent first (Image 1), so the opening line says which image to edit.
 // rawPrompt sends the text untouched (for prompts that already carry their own keep list).
 export const buildEditPrompt = (editInstructions, options = {}) => {
   if (options.rawPrompt) return editInstructions;
-  return `Generate this exact same image, but make the following specific edits only:
+  const opening = options.withReference
+    ? EDIT_REFERENCE_PREAMBLE
+    : 'Generate this exact same image, but make the following specific edits only:';
+  return `${opening}
 
 ${editInstructions}
 

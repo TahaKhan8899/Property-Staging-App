@@ -15,6 +15,15 @@ describe('buildEditPrompt', () => {
     expect(p).toContain('Do not add any new objects unless explicitly listed above');
   });
 
+  it('with a reference, opens with the Image 1 / Image 2 preamble and keeps the rest of the template', () => {
+    const plain = buildEditPrompt('Match the sofa');
+    const withRef = buildEditPrompt('Match the sofa', { withReference: true });
+    expect(withRef.startsWith('Image 1 is a reference image. Image 2 is the image to edit.')).toBe(true);
+    expect(withRef).toContain("placed correctly for image 2's perspective.");
+    expect(withRef.split('\n').slice(1).join('\n')).toBe(plain.split('\n').slice(1).join('\n'));
+    expect(plain.startsWith('Generate this exact same image, but make the following specific edits only:')).toBe(true);
+  });
+
   it('passes text through untouched with rawPrompt', () => {
     const raw = 'Keep exactly as they are:\n- a rug\nChanges:\n1. remove the table';
     expect(buildEditPrompt(raw, { rawPrompt: true })).toBe(raw);

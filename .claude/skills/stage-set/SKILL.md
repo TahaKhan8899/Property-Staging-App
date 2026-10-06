@@ -65,7 +65,8 @@ Without a plan, infer a layout and label it `INFERRED`.
 |---|---|
 | Furniture position, layout, or which wall | **Fresh render from the original.** Write the prompt by hand and send it as `POST /render` `{"prompt": "...", "candidates": 2}` (one-off; doesn't change the room's saved prompt). Use `PUT /prompt` instead if it should become the room's prompt. Gemini moves furniture badly through edits. |
 | Small addition or swap (TV, art, dining set, counter decor, throw color) | **Edit.** `POST /api/rooms/:id/edit` `{"instructions": "<numbered, literal changes anchored to frame positions>"}`. Up to about 4 changes per call. Every edit pass degrades color a little, so don't chain more than 2 to 3 edits on one image. Re-render instead. |
-| Make one angle's decor match the other angle | Edit one angle, then edit the other angle using the first as a reference image. Until plan item 1.2 lands there is no reference on edits, so describe the item precisely, or re-render the dependent from the updated anchor. |
+| Make one angle's decor match the other angle | Edit one angle, then edit the other with the first as reference: `POST /edit` `{"instructions": "...match the <item> in the reference image...", "referenceRoomId": "<other angle>", "referenceVersionId": "<its new version>"}`. Works in either direction. The instructions must name what to match. |
+| Use a specific real piece (client sent a product photo) | `POST /edit` with `"referenceImage": "data:image/jpeg;base64,..."` and `"referenceLabel": "<file name>"`. |
 | Edit an older version | `POST /edit` with `"baseVersionId": "<id>"`. No restore needed. |
 | Recurring correction across rooms | Tell Taha it belongs in the system prompt (`shared/constants.js`). Don't hand-patch every room. |
 
@@ -88,6 +89,5 @@ Without a plan, infer a layout and label it `INFERRED`.
 - **Rule changes from Taha's review:** white drapes only, and the bed throw in an accent color different from the duvet. Both are now in the system prompt.
 
 ## Known gaps (update this list as plan items land)
-- 1.2: no reference image on edits.
 - 1.4: candidates exist on the API, but the UI has no picker. Taha moves between candidates with the version arrows.
 - No floor-plan input to the server's prompt writer. The plan reaches it only through `userComments`.
