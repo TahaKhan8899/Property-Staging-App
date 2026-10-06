@@ -87,26 +87,34 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, referenceOptions = [], apiUsa
   const currentVersion = versions[currentVersionIndex];
   // Ignore stale ids (reference room deleted or its render discarded) -> falls back to single-image flow
   const referenceOption = referenceOptions.find(o => o.id === room.referenceRoomId);
-  const [referenceVersionLabel, setReferenceVersionLabel] = useState('');
+  // Versions of the reference room, and which one to send as Image 1 ('' = whatever it currently shows)
+  const [referenceVersions, setReferenceVersions] = useState<ImageVersion[]>([]);
+  const [referenceVersionId, setReferenceVersionId] = useState('');
 
-  // Resolve "Version n of m" for the selected reference so it's clear which render is sent as Image 1
   useEffect(() => {
     if (!referenceOption) {
-      setReferenceVersionLabel('');
+      setReferenceVersions([]);
       return;
     }
     let cancelled = false;
     getImageVersions(referenceOption.id)
-      .then((list: ImageVersion[]) => {
-        if (cancelled) return;
-        const idx = referenceOption.currentVersionId
-          ? list.findIndex(v => v.id === referenceOption.currentVersionId)
-          : list.length - 1;
-        setReferenceVersionLabel(idx >= 0 ? `Version ${idx + 1} of ${list.length}` : '');
-      })
-      .catch(() => { if (!cancelled) setReferenceVersionLabel(''); });
+      .then((list: ImageVersion[]) => { if (!cancelled) setReferenceVersions(list); })
+      .catch(() => { if (!cancelled) setReferenceVersions([]); });
     return () => { cancelled = true; };
   }, [referenceOption?.id, referenceOption?.currentVersionId, referenceOption?.url]);
+
+  // A pinned version that no longer belongs to the reference room falls back to "current"
+  useEffect(() => {
+    if (referenceVersionId && !referenceVersions.some(v => v.id === referenceVersionId)) setReferenceVersionId('');
+  }, [referenceVersions, referenceVersionId]);
+
+  const referenceCurrentVersion = referenceVersions.find(v => v.id === referenceOption?.currentVersionId)
+    ?? referenceVersions[referenceVersions.length - 1];
+  const pinnedReferenceVersion = referenceVersions.find(v => v.id === referenceVersionId);
+  const referenceImageVersion = pinnedReferenceVersion ?? referenceCurrentVersion;
+  const referenceImageUrl = referenceImageVersion?.url || referenceOption?.url;
+  // Sent only when pinned, so the default request is unchanged
+  const referenceRequest = referenceOption && pinnedReferenceVersion ? { referenceVersionId: pinnedReferenceVersion.id } : {};
 
   const resolveBasePrompt = () => (room.generatedPrompt || promptText || '').trim();
   const buildPromptSnapshot = (source: string, extra: Partial<PromptSnapshot> = {}): PromptSnapshot => {
@@ -176,7 +184,7 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, referenceOptions = [], apiUsa
     onUpdate(room.id, { isGeneratingPrompt: true, error: undefined });
     try {
       // Server picks the reference-angle flow when the room has a staged reference room
-      const { generatedPrompt: prompt } = await generateRoomPrompt(room.id, room.initialThoughts);
+      const { generatedPrompt: prompt } = await generateRoomPrompt(room.id, { userComments: room.initialThoughts, ...referenceRequest });
       onUpdate(room.id, {
         generatedPrompt: prompt,
         initialPrompt: prompt, // Save original for reset
@@ -234,6 +242,7 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, referenceOptions = [], apiUsa
       // The server renders from the prompt stored in the DB, so make sure our pending writes have landed
       await onUpdate(room.id, { isGeneratingImage: true, error: undefined });
       const { url, currentVersionId } = await renderRoom(room.id, {
+        ...referenceRequest,
         onProgress: (status, img) => {
           if (status) setProgressThought(status);
           if (img) setInterimImageUrl(img);
@@ -424,21 +433,31 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, referenceOptions = [], apiUsa
     if (referenceOptions.length === 0) return null;
     return (
       <div className="flex items-center justify-end gap-3 w-full">
-        {referenceOption && (
+        {referenceOption && referenceImageUrl && (
           <a
-            href={referenceOption.url}
+            href={referenceImageUrl}
             target="_blank"
             rel="noreferrer"
             title="Image 1 sent to Gemini (click to open full size)"
             className="flex items-center gap-2 text-xs text-gray-500 hover:text-gray-700"
           >
             <img
-              src={referenceOption.url}
+              src={referenceImageUrl}
               alt={`Reference: ${referenceOption.label}`}
               className="h-12 aspect-video object-cover rounded border border-gray-200"
             />
-            {referenceVersionLabel && <span className="whitespace-nowrap">{referenceVersionLabel}</span>}
           </a>
+        )}
+        {referenceOption && referenceVersions.length > 0 && (
+          <select
+            value={referenceVersionId}
+            onChange={(e) => setReferenceVersionId(e.target.value)}
+            title="Which render of the reference room to send as Image 1"
+            className="rounded-md border-gray-300 bg-white text-gray-900 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm py-1 px-2 border"
+          >
+            <option value="">Current{referenceCurrentVersion ? ` (v${referenceCurrentVersion.versionNumber})` : ''}</option>
+            {referenceVersions.map(v => <option key={v.id} value={v.id}>v{v.versionNumber}</option>)}
+          </select>
         )}
         <label className="flex items-center gap-2 text-sm text-gray-600">
           <span className="whitespace-nowrap">Reference (same room, other angle)</span>

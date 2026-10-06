@@ -31,15 +31,35 @@ export const registerGeminiRoutes = (app, { db, getUploadFilePath, saveGenerated
         return { mimeType: guessMimeType(fullPath), data: fs.readFileSync(fullPath).toString('base64') };
     };
 
-    // The room's staged sibling (same room, other angle), if set and it has a render on disk
-    const resolveReference = (room) => {
+    const loadVersion = (versionId, roomId) =>
+        db.prepare('SELECT * FROM image_versions WHERE id = ? AND roomId = ?').get(versionId, roomId);
+
+    const roomBaseName = (r) => path.basename(r.filePath || '', path.extname(r.filePath || '')) || 'reference';
+
+    // 400 unless versionId (when given) belongs to the room's reference room
+    const checkReferenceVersion = (room, versionId) => {
+        if (!versionId) return null;
+        if (!room.referenceRoomId) return { error: 'referenceVersionId given but the room has no reference room' };
+        if (!loadVersion(versionId, room.referenceRoomId)) return { error: 'referenceVersionId does not belong to the reference room' };
+        return null;
+    };
+
+    // The room's staged sibling (same room, other angle): the given version, else whatever is current.
+    // Labelled "<Room> vN" so the snapshot records exactly which render was Image 1.
+    const resolveReference = (room, referenceVersionId) => {
         if (!room.referenceRoomId) return null;
         const ref = loadRoom(room.referenceRoomId);
-        if (!ref?.generatedImageUrl) return null;
+        if (!ref) return null;
+        if (referenceVersionId) {
+            const version = loadVersion(referenceVersionId, ref.id);
+            return { image: readImage(version.url), label: `${roomBaseName(ref)} v${version.versionNumber}` };
+        }
+        if (!ref.generatedImageUrl) return null;
         try {
+            const current = ref.currentVersionId ? loadVersion(ref.currentVersionId, ref.id) : null;
             return {
                 image: readImage(ref.generatedImageUrl),
-                label: path.basename(ref.filePath || '', path.extname(ref.filePath || '')) || 'reference'
+                label: current ? `${roomBaseName(ref)} v${current.versionNumber}` : roomBaseName(ref)
             };
         } catch {
             return null; // stale reference falls back to the single-image flow
@@ -104,8 +124,9 @@ export const registerGeminiRoutes = (app, { db, getUploadFilePath, saveGenerated
     app.post('/api/rooms/:id/prompt', (req, res) => runOperation(req, res, {
         kind: 'prompt',
         flag: 'isGeneratingPrompt',
+        validate: (room) => checkReferenceVersion(room, req.body?.referenceVersionId),
         execute: async ({ room }) => {
-            const reference = resolveReference(room);
+            const reference = resolveReference(room, req.body?.referenceVersionId);
             const raw = await gemini.generatePrompt({
                 roomId: room.id,
                 image: readImage(room.filePath),
@@ -132,19 +153,44 @@ export const registerGeminiRoutes = (app, { db, getUploadFilePath, saveGenerated
         }
     }));
 
-    // Render from the approved prompt. candidates 1..3 run in parallel; each becomes its own version.
+    // Save a hand-written prompt as the room's prompt (optionally approving it). Never touches
+    // initialPrompt, which is the baseline for measuring prompt edits (plan item 1.5).
+    app.put('/api/rooms/:id/prompt', (req, res) => {
+        try {
+            const room = loadRoom(req.params.id);
+            if (!room) return res.status(404).json({ error: 'Room not found' });
+            const { prompt, approve } = req.body || {};
+            if (typeof prompt !== 'string' || !prompt.trim()) return res.status(400).json({ error: 'prompt must be a non-empty string' });
+            const approved = approve === undefined ? Boolean(room.isPromptApproved) : Boolean(approve);
+            db.prepare('UPDATE rooms SET generatedPrompt = ?, isPromptApproved = ? WHERE id = ?').run(prompt, approved ? 1 : 0, room.id);
+            res.json({ generatedPrompt: prompt, isPromptApproved: approved });
+        } catch (err) {
+            console.error(err);
+            res.status(500).json({ error: err.message });
+        }
+    });
+
+    // Render from the approved prompt, or from an explicit `prompt` (which counts as the approval and is
+    // not saved to the room). candidates 1..3 run in parallel; each becomes its own version.
+    // referenceVersionId picks which render of the reference room is Image 1 (default: its current one).
     app.post('/api/rooms/:id/render', (req, res) => runOperation(req, res, {
         kind: 'render',
         flag: 'isGeneratingImage',
         validate: (room) => {
-            if (!room.generatedPrompt?.trim()) return { error: 'Room has no prompt yet' };
-            if (!room.isPromptApproved) return { error: 'Prompt is not approved' };
-            return null;
+            const manual = req.body?.prompt;
+            if (manual !== undefined && (typeof manual !== 'string' || !manual.trim())) return { error: 'prompt must be a non-empty string' };
+            if (manual === undefined) {
+                if (!room.generatedPrompt?.trim()) return { error: 'Room has no prompt yet' };
+                if (!room.isPromptApproved) return { error: 'Prompt is not approved' };
+            }
+            return checkReferenceVersion(room, req.body?.referenceVersionId);
         },
         execute: async ({ send, room }) => {
             const n = Math.min(MAX_CANDIDATES, Math.max(1, parseInt(req.body?.candidates, 10) || 1));
+            const manualPrompt = req.body?.prompt?.trim();
+            const prompt = manualPrompt || room.generatedPrompt;
             const image = readImage(room.filePath);
-            const reference = resolveReference(room);
+            const reference = resolveReference(room, req.body?.referenceVersionId);
 
             const outcomes = await Promise.allSettled(Array.from({ length: n }, async (_, i) => {
                 const k = i + 1;
@@ -152,10 +198,11 @@ export const registerGeminiRoutes = (app, { db, getUploadFilePath, saveGenerated
                     roomId: room.id,
                     image,
                     reference: reference?.image,
-                    prompt: room.generatedPrompt,
+                    prompt,
                     onProgress: progressSender(send, k)
                 });
                 const notes = [
+                    manualPrompt ? 'Prompt: manual' : null,
                     reference ? `Reference angle: ${reference.label}` : null,
                     n > 1 ? `Candidate ${k} of ${n}` : null
                 ].filter(Boolean).join('; ');
@@ -163,7 +210,7 @@ export const registerGeminiRoutes = (app, { db, getUploadFilePath, saveGenerated
                     room.id,
                     buffer,
                     n > 1 ? `Candidate ${k} of ${n}` : 'Initial generation',
-                    { basePrompt: room.generatedPrompt, capturedAt: Date.now(), source: 'generate', ...(notes ? { notes } : {}) }
+                    { basePrompt: prompt, capturedAt: Date.now(), source: 'generate', ...(notes ? { notes } : {}) }
                 );
             }));
 
@@ -183,19 +230,25 @@ export const registerGeminiRoutes = (app, { db, getUploadFilePath, saveGenerated
         }
     }));
 
-    // Edit the room's current render. rawPrompt sends instructions untouched (composed prompts, item 1.3).
+    // Edit the room's current render, or the version named by baseVersionId (without restoring it).
+    // rawPrompt sends instructions untouched (composed prompts, item 1.3).
     app.post('/api/rooms/:id/edit', (req, res) => runOperation(req, res, {
         kind: 'edit',
         validate: (room) => {
             if (!req.body?.instructions?.trim()) return { error: 'instructions is required' };
-            if (!room.generatedImageUrl) return { error: 'Room has no staged image to edit' };
+            if (req.body.baseVersionId) {
+                if (!loadVersion(req.body.baseVersionId, room.id)) return { error: 'baseVersionId does not belong to this room' };
+            } else if (!room.generatedImageUrl) {
+                return { error: 'Room has no staged image to edit' };
+            }
             return null;
         },
         execute: async ({ send, room }) => {
-            const { instructions, rawPrompt, intents } = req.body;
+            const { instructions, rawPrompt, intents, baseVersionId } = req.body;
+            const base = baseVersionId ? loadVersion(baseVersionId, room.id) : null;
             const buffer = await gemini.editImage({
                 roomId: room.id,
-                image: readImage(room.generatedImageUrl),
+                image: readImage(base ? base.url : room.generatedImageUrl),
                 instructions,
                 rawPrompt: Boolean(rawPrompt),
                 onProgress: progressSender(send)
@@ -206,7 +259,8 @@ export const registerGeminiRoutes = (app, { db, getUploadFilePath, saveGenerated
                 capturedAt: Date.now(),
                 source: rawPrompt ? 'edit-composed' : 'edit',
                 editInstruction: rawPrompt && intents ? intents : instructions,
-                ...(rawPrompt ? { rawPrompt: instructions } : {})
+                ...(rawPrompt ? { rawPrompt: instructions } : {}),
+                ...(base ? { notes: `Edited from v${base.versionNumber}` } : {})
             };
             const saved = saveGeneratedBuffer(room.id, buffer, `Edit: ${label.substring(0, 50)}`, snapshot);
             return { url: saved.url, currentVersionId: saved.version.id, version: { ...saved.version, url: saved.url } };

@@ -152,7 +152,7 @@ describe('POST /api/rooms/:id/render', () => {
         expect(parts).toHaveLength(3);
         expect(parts[2].text).toBe('go');
         const snap = JSON.parse(ctx.db.prepare('SELECT promptSnapshot FROM image_versions WHERE roomId = ?').get(dep.id).promptSnapshot);
-        expect(snap.notes).toBe('Reference angle: Living Room 1');
+        expect(snap.notes).toBe('Reference angle: Living Room 1 v1');
     });
 
     it('returns an error and logs a failed row when the model returns no image', async () => {
@@ -228,6 +228,103 @@ describe('POST /api/rooms/:id/edit', () => {
         const { r: bare } = await approvedRoom();
         await request(ctx.app).post(`/api/rooms/${bare.id}/edit`).send({ instructions: 'x' }).expect(400);
         await request(ctx.app).post('/api/rooms/nope/edit').send({ instructions: 'x' }).expect(404);
+    });
+});
+
+describe('version targeting (1.1c)', () => {
+    const imageDataSent = (call, index) => call.req.contents.parts[index].inlineData.data;
+    const fileB64 = (s, rel) => fs.readFileSync(path.join(ctx.uploads, s.name, rel)).toString('base64');
+
+    // Anchor with two distinct renders (v1, v2; v2 current) and a dependent linked to it
+    const anchorAndDependent = async () => {
+        const s = await createSession(ctx.app);
+        const anchor = await uploadRoom(ctx.app, s.id, 'Living Room');
+        const v1 = await saveGenerated(ctx.app, anchor.id, await makeJpeg(400, 225, 11));
+        await saveGenerated(ctx.app, anchor.id, await makeJpeg(400, 225, 12));
+        const dep = await uploadRoom(ctx.app, s.id, 'Living Room');
+        ctx.db.prepare('UPDATE rooms SET referenceRoomId = ?, generatedPrompt = ?, isPromptApproved = 1 WHERE id = ?').run(anchor.id, 'go', dep.id);
+        return { s, anchor, dep, v1 };
+    };
+
+    it('render with prompt uses that text on an unapproved room and leaves both prompt columns alone', async () => {
+        const s = await createSession(ctx.app);
+        const r = await uploadRoom(ctx.app, s.id, 'Bedroom');
+        ctx.db.prepare('UPDATE rooms SET generatedPrompt = ?, initialPrompt = ? WHERE id = ?').run('saved', 'initial', r.id);
+        const res = await request(ctx.app).post(`/api/rooms/${r.id}/render`).send({ prompt: 'Manual prompt text' }).expect(200);
+        expect(calls[0].req.contents.parts[1].text).toBe('Manual prompt text');
+        const row = getRoom(ctx.db, r.id);
+        expect(row).toMatchObject({ generatedPrompt: 'saved', initialPrompt: 'initial', isPromptApproved: 0 });
+        expect(res.body.versions[0].promptSnapshot).toMatchObject({ basePrompt: 'Manual prompt text', notes: 'Prompt: manual' });
+    });
+
+    it('render rejects an empty manual prompt', async () => {
+        const { r } = await approvedRoom();
+        await request(ctx.app).post(`/api/rooms/${r.id}/render`).send({ prompt: '  ' }).expect(400);
+    });
+
+    it('render with referenceVersionId sends that version, not the current one, and notes it', async () => {
+        const { s, anchor, dep, v1 } = await anchorAndDependent();
+        const res = await request(ctx.app).post(`/api/rooms/${dep.id}/render`).send({ referenceVersionId: v1.version.id }).expect(200);
+        expect(imageDataSent(calls[0], 0)).toBe(fileB64(s, 'staged/Living Room 1_v1.jpg'));
+        expect(res.body.versions[0].promptSnapshot.notes).toBe('Reference angle: Living Room 1 v1');
+        // The anchor's current pointer did not move
+        expect(getRoom(ctx.db, anchor.id).generatedImageUrl).toBe(`${s.name}/staged/Living Room 1_v2.jpg`);
+    });
+
+    it('referenceVersionId from another room, or without a reference room, is 400 and makes no call', async () => {
+        const { dep } = await anchorAndDependent();
+        const other = await anchorAndDependent();
+        await request(ctx.app).post(`/api/rooms/${dep.id}/render`).send({ referenceVersionId: other.v1.version.id }).expect(400);
+        await request(ctx.app).post(`/api/rooms/${dep.id}/prompt`).send({ referenceVersionId: other.v1.version.id }).expect(400);
+        const { r } = await approvedRoom();
+        await request(ctx.app).post(`/api/rooms/${r.id}/render`).send({ referenceVersionId: other.v1.version.id }).expect(400);
+        expect(calls).toHaveLength(0);
+    });
+
+    it('prompt with referenceVersionId sends that version to the reference-angle writer', async () => {
+        const { s, dep, v1 } = await anchorAndDependent();
+        await request(ctx.app).post(`/api/rooms/${dep.id}/prompt`).send({ referenceVersionId: v1.version.id }).expect(200);
+        expect(imageDataSent(calls[0], 0)).toBe(fileB64(s, 'staged/Living Room 1_v1.jpg'));
+    });
+
+    it('edit with baseVersionId edits that version without a restore and notes it', async () => {
+        const { s, anchor, v1 } = await anchorAndDependent();
+        const res = await request(ctx.app).post(`/api/rooms/${anchor.id}/edit`).send({ instructions: 'add a lamp', baseVersionId: v1.version.id }).expect(200);
+        expect(imageDataSent(calls[0], 0)).toBe(fileB64(s, 'staged/Living Room 1_v1.jpg'));
+        expect(res.body.version.versionNumber).toBe(3);
+        expect(res.body.version.promptSnapshot.notes).toBe('Edited from v1');
+    });
+
+    it('edit with a baseVersionId from another room is 400', async () => {
+        const { anchor } = await anchorAndDependent();
+        const other = await anchorAndDependent();
+        await request(ctx.app).post(`/api/rooms/${anchor.id}/edit`).send({ instructions: 'x', baseVersionId: other.v1.version.id }).expect(400);
+        expect(calls).toHaveLength(0);
+    });
+
+    it('calls without the new fields send the same request shape as before', async () => {
+        const { s, dep } = await anchorAndDependent();
+        await request(ctx.app).post(`/api/rooms/${dep.id}/render`).send({}).expect(200);
+        const parts = calls[0].req.contents.parts;
+        expect(parts.map(p => Object.keys(p)[0])).toEqual(['inlineData', 'inlineData', 'text']);
+        expect(parts[0].inlineData.data).toBe(fileB64(s, 'staged/Living Room 1_v2.jpg')); // anchor's current
+        expect(parts[2].text).toBe('go');
+        expect(calls[0].req.config).toEqual({ imageConfig: { imageSize: '2K', aspectRatio: '16:9' } });
+    });
+});
+
+describe('PUT /api/rooms/:id/prompt', () => {
+    it('sets generatedPrompt and approval but never initialPrompt', async () => {
+        const { r } = await approvedRoom();
+        ctx.db.prepare('UPDATE rooms SET isPromptApproved = 0 WHERE id = ?').run(r.id);
+        const res = await request(ctx.app).put(`/api/rooms/${r.id}/prompt`).send({ prompt: 'Hand written', approve: true }).expect(200);
+        expect(res.body).toEqual({ generatedPrompt: 'Hand written', isPromptApproved: true });
+        expect(getRoom(ctx.db, r.id)).toMatchObject({ generatedPrompt: 'Hand written', initialPrompt: 'Stage it', isPromptApproved: 1 });
+        await request(ctx.app).put(`/api/rooms/${r.id}/prompt`).send({ prompt: 'Second' }).expect(200);
+        expect(getRoom(ctx.db, r.id).isPromptApproved).toBe(1); // approve omitted -> unchanged
+        await request(ctx.app).put(`/api/rooms/${r.id}/prompt`).send({}).expect(400);
+        await request(ctx.app).put('/api/rooms/nope/prompt').send({ prompt: 'x' }).expect(404);
+        expect(calls).toHaveLength(0);
     });
 });
 

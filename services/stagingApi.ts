@@ -63,13 +63,17 @@ const postWithProgress = async <T>(path: string, body: unknown, onProgress?: Pro
 
 const withFullUrls = <T extends { url: string }>(v: T): T => ({ ...v, url: getFullUrl(v.url) || v.url });
 
-export const generateRoomPrompt = (roomId: string, userComments?: string, onProgress?: ProgressHandler) =>
-  postWithProgress<{ generatedPrompt: string; initialPrompt: string }>(`/rooms/${roomId}/prompt`, { userComments }, onProgress);
+// referenceVersionId: which render of the reference room to use (default: its current one)
+export const generateRoomPrompt = (roomId: string, options: { userComments?: string; referenceVersionId?: string } = {}) =>
+  postWithProgress<{ generatedPrompt: string; initialPrompt: string }>(`/rooms/${roomId}/prompt`, options);
 
 export const refineRoomPrompt = (roomId: string, currentPrompt: string, feedback: string) =>
   postWithProgress<{ generatedPrompt: string }>(`/rooms/${roomId}/refine-prompt`, { currentPrompt, feedback });
 
-export const renderRoom = async (roomId: string, options: { candidates?: number; onProgress?: ProgressHandler } = {}) => {
+export const renderRoom = async (
+  roomId: string,
+  options: { candidates?: number; referenceVersionId?: string; onProgress?: ProgressHandler } = {}
+) => {
   const res = await postWithProgress<{
     url: string;
     currentVersionId: string;
@@ -77,7 +81,10 @@ export const renderRoom = async (roomId: string, options: { candidates?: number;
     requested: number;
     failed: number;
     errors: string[];
-  }>(`/rooms/${roomId}/render`, { candidates: options.candidates ?? 1 }, options.onProgress);
+  }>(`/rooms/${roomId}/render`, {
+    candidates: options.candidates ?? 1,
+    referenceVersionId: options.referenceVersionId
+  }, options.onProgress);
   return { ...withFullUrls(res), versions: res.versions.map(withFullUrls) };
 };
 
