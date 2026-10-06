@@ -34,6 +34,36 @@ const ROOM_STATUS_META: Record<RoomStatus, { label: string; dotClass: string; ac
   }
 };
 
+// Gemini errors arrive as JSON nested inside strings; unwrap down to the innermost "message"
+const toReadableError = (raw: string) => {
+  let msg = raw;
+  for (let i = 0; i < 3; i++) {
+    const start = msg.indexOf('{');
+    if (start === -1) break;
+    try {
+      const parsed = JSON.parse(msg.slice(start));
+      const inner = parsed?.error?.message ?? parsed?.message;
+      if (typeof inner !== 'string') break;
+      msg = msg.slice(0, start) + inner.trim();
+    } catch {
+      break;
+    }
+  }
+  return msg;
+};
+
+// Exactly one footer phase per card. An existing render always wins over stale prompt flags,
+// e.g. a staged image uploaded before the prompt was approved.
+type FooterPhase = 'editingImage' | 'generatingImage' | 'imageDone' | 'generatingPrompt' | 'noPrompt' | 'promptReady' | 'promptApproved';
+const getFooterPhase = (room: RoomData): FooterPhase => {
+  if (room.isEditingImage) return 'editingImage';
+  if (room.isGeneratingImage) return 'generatingImage';
+  if (room.generatedImageUrl) return 'imageDone';
+  if (room.isGeneratingPrompt) return 'generatingPrompt';
+  if (!room.generatedPrompt) return 'noPrompt';
+  return room.isPromptApproved ? 'promptApproved' : 'promptReady';
+};
+
 const RoomCard: React.FC<RoomCardProps> = ({ room, referenceOptions = [], apiUsage, onUpdate, onRemove }) => {
   const roomStatus = (room.roomStatus || 'in_progress') as RoomStatus;
   const [promptText, setPromptText] = useState(room.generatedPrompt);
@@ -88,6 +118,7 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, referenceOptions = [], apiUsa
     };
   };
   const canViewPrompt = Boolean(currentVersion?.promptSnapshot || resolveBasePrompt());
+  const footerPhase = getFooterPhase(room);
   const promptVersionLabel = currentVersion
     ? `Version ${currentVersionIndex + 1} of ${versions.length || 1}`
     : 'Current Version';
@@ -97,9 +128,9 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, referenceOptions = [], apiUsa
     setPromptText(room.generatedPrompt);
   }, [room.generatedPrompt]);
 
-  // Load versions when image is generated
+  // Load versions when image is generated, and after a discard so "Back to Render" can find them
   useEffect(() => {
-    if (room.generatedImageUrl && room.id) {
+    if (room.id) {
       loadVersions();
     }
   }, [room.generatedImageUrl, room.id]);
@@ -299,9 +330,27 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, referenceOptions = [], apiUsa
       const { url } = await restoreImageVersion(room.id, version.id);
       onUpdate(room.id, {
         generatedImageUrl: url,
-        currentVersionId: version.id
+        currentVersionId: version.id,
+        error: undefined
       });
       setCurrentVersionIndex(newIndex);
+    } catch (err) {
+      onUpdate(room.id, { error: (err as Error).message });
+    }
+  };
+
+  // Undo a Discard & Retry: re-show the version that was displayed before (or the latest)
+  const handleBackToRender = async () => {
+    const version = versions.find(v => v.id === room.currentVersionId) || versions[versions.length - 1];
+    if (!version) return;
+    try {
+      const { url } = await restoreImageVersion(room.id, version.id);
+      onUpdate(room.id, {
+        generatedImageUrl: url,
+        currentVersionId: version.id,
+        error: undefined
+      });
+      setCurrentVersionIndex(versions.indexOf(version));
     } catch (err) {
       onUpdate(room.id, { error: (err as Error).message });
     }
@@ -412,7 +461,7 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, referenceOptions = [], apiUsa
   const renderReferencePicker = () => {
     if (referenceOptions.length === 0) return null;
     return (
-      <div className="flex items-center gap-3 self-end">
+      <div className="flex items-center justify-end gap-3 w-full">
         {referenceOption && (
           <a
             href={referenceOption.url}
@@ -443,6 +492,17 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, referenceOptions = [], apiUsa
       </div>
     );
   };
+
+  const renderBackToRenderButton = () => versions.length > 0 && (
+    <button
+      onClick={handleBackToRender}
+      className="px-3 py-2 text-sm font-medium rounded-md transition-colors text-gray-700 hover:bg-gray-100 flex items-center gap-2"
+      title="Return to the staged render shown before Discard & Retry"
+    >
+      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 19l-7-7m0 0l7-7m-7 7h18" /></svg>
+      Back to Render
+    </button>
+  );
 
   const renderUploadButton = (label: string, extraClasses = '') => (
     <button
@@ -538,10 +598,12 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, referenceOptions = [], apiUsa
       </div>
 
       {/* Content Area */}
-      <div className="p-4 flex flex-col lg:flex-row gap-6 h-full">
+      {/* lg+: columns share their header row (subgrid), so a wrapped staged-render toolbar
+          can't push the staged image below the original */}
+      <div className="p-4 flex flex-col gap-6 h-full lg:grid lg:grid-cols-2 lg:grid-rows-[auto_1fr] lg:gap-y-2">
 
         {/* Left: Original Image */}
-        <div className="flex-1 flex flex-col gap-2 min-w-[300px]">
+        <div className="flex-1 flex flex-col gap-2 min-w-[300px] lg:grid lg:row-span-2 lg:[grid-template-rows:subgrid]">
           <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Original</span>
           <div className="relative aspect-video bg-gray-100 rounded-lg overflow-hidden border border-gray-200">
             <img src={room.previewUrl} alt="Original" className="w-full h-full object-cover" />
@@ -549,7 +611,7 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, referenceOptions = [], apiUsa
         </div>
 
         {/* Right: Prompt or Result */}
-        <div className="flex-1 flex flex-col gap-2 min-w-[300px]">
+        <div className="flex-1 flex flex-col gap-2 min-w-[300px] lg:grid lg:row-span-2 lg:[grid-template-rows:subgrid]">
           {/* Staged Image View if generated */}
           {room.generatedImageUrl && !room.isEditingImage ? (
             <>
@@ -559,16 +621,17 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, referenceOptions = [], apiUsa
                   Staged Render
                 </span>
                 <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setIsPromptViewerOpen(true)}
-                    disabled={!canViewPrompt}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border border-gray-200 text-gray-600 bg-white hover:text-gray-900 hover:border-gray-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                  >
-                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 4h13M8 9h13M8 14h13M3 4h.01M3 9h.01M3 14h.01" />
-                    </svg>
-                    View Prompt
-                  </button>
+                  {canViewPrompt && (
+                    <button
+                      onClick={() => setIsPromptViewerOpen(true)}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border border-gray-200 text-gray-600 bg-white hover:text-gray-900 hover:border-gray-300 transition-colors"
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 4h13M8 9h13M8 14h13M3 4h.01M3 9h.01M3 14h.01" />
+                      </svg>
+                      View Prompt
+                    </button>
+                  )}
                   <button
                     onClick={() => setIsCompareOpen(true)}
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border border-gray-200 text-gray-600 bg-white hover:text-gray-900 hover:border-gray-300 transition-colors"
@@ -607,67 +670,69 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, referenceOptions = [], apiUsa
                   )}
                 </div>
               </div>
-              <div className="relative aspect-video bg-gray-900 rounded-lg overflow-hidden group">
-                <img src={room.generatedImageUrl} alt="Staged" className="w-full h-full object-cover" />
-                <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-30 transition-all flex items-center justify-center opacity-0 group-hover:opacity-100">
-                  <div className="flex gap-3">
-                    <button
-                      onClick={handleDownload}
-                      className="bg-white text-gray-900 px-4 py-2 rounded-full font-medium shadow-lg hover:scale-105 transition-transform"
-                    >
-                      Download 2K
-                    </button>
-                    <button
-                      onClick={handleDownloadCompressed}
-                      disabled={isDownloadingCompressed}
-                      className="bg-indigo-600 text-white px-4 py-2 rounded-full font-medium shadow-lg hover:scale-105 transition-transform disabled:opacity-50 disabled:cursor-wait flex items-center gap-2"
-                    >
-                      {isDownloadingCompressed ? (
-                        <>
-                          <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
-                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                          </svg>
-                          Compressing...
-                        </>
-                      ) : (
-                        'Download Compressed'
-                      )}
-                    </button>
+              <div className="flex flex-col gap-2">
+                <div className="relative aspect-video bg-gray-900 rounded-lg overflow-hidden border border-gray-200 group">
+                  <img src={room.generatedImageUrl} alt="Staged" className="w-full h-full object-cover" />
+                  <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-30 transition-all flex items-center justify-center opacity-0 group-hover:opacity-100">
+                    <div className="flex gap-3">
+                      <button
+                        onClick={handleDownload}
+                        className="bg-white text-gray-900 px-4 py-2 rounded-full font-medium shadow-lg hover:scale-105 transition-transform"
+                      >
+                        Download 2K
+                      </button>
+                      <button
+                        onClick={handleDownloadCompressed}
+                        disabled={isDownloadingCompressed}
+                        className="bg-indigo-600 text-white px-4 py-2 rounded-full font-medium shadow-lg hover:scale-105 transition-transform disabled:opacity-50 disabled:cursor-wait flex items-center gap-2"
+                      >
+                        {isDownloadingCompressed ? (
+                          <>
+                            <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                            </svg>
+                            Compressing...
+                          </>
+                        ) : (
+                          'Download Compressed'
+                        )}
+                      </button>
+                    </div>
                   </div>
                 </div>
-              </div>
 
-              {/* Edit Interface - shown when in edit mode */}
-              {isEditingMode && (
-                <div className="mt-2 flex flex-col gap-2">
-                  <textarea
-                    value={editText}
-                    onChange={(e) => setEditText(e.target.value)}
-                    placeholder="Enter your edits (e.g., 'Make the sofa blue', 'Add a plant on the coffee table', 'Change the rug to a lighter color')"
-                    className="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border h-24 resize-none"
-                  />
-                  <div className="flex gap-2 justify-end">
-                    <button
-                      onClick={() => {
-                        setIsEditingMode(false);
-                        setEditText('');
-                      }}
-                      className="px-3 py-2 text-sm text-gray-500 hover:text-gray-700"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      onClick={handleEditImage}
-                      disabled={!editText.trim()}
-                      className="inline-flex items-center px-4 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50 gap-2"
-                    >
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
-                      Apply Edits
-                    </button>
+                {/* Edit Interface - shown when in edit mode */}
+                {isEditingMode && (
+                  <div className="mt-2 flex flex-col gap-2">
+                    <textarea
+                      value={editText}
+                      onChange={(e) => setEditText(e.target.value)}
+                      placeholder="Enter your edits (e.g., 'Make the sofa blue', 'Add a plant on the coffee table', 'Change the rug to a lighter color')"
+                      className="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border h-24 resize-none"
+                    />
+                    <div className="flex gap-2 justify-end">
+                      <button
+                        onClick={() => {
+                          setIsEditingMode(false);
+                          setEditText('');
+                        }}
+                        className="px-3 py-2 text-sm text-gray-500 hover:text-gray-700"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={handleEditImage}
+                        disabled={!editText.trim()}
+                        className="inline-flex items-center px-4 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50 gap-2"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                        Apply Edits
+                      </button>
+                    </div>
                   </div>
-                </div>
-              )}
+                )}
+              </div>
             </>
           ) : room.isEditingImage ? (
             /* Editing View with Progress */
@@ -736,67 +801,87 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, referenceOptions = [], apiUsa
                 <span>Staging Prompt</span>
                 {room.isGeneratingPrompt && <span className="text-indigo-600 animate-pulse">Generating...</span>}
               </span>
-              <div className="flex-1 relative">
-                <textarea
-                  ref={textareaRef}
-                  value={promptText}
-                  onChange={(e) => setPromptText(e.target.value)}
-                  disabled={room.isGeneratingPrompt || room.isGeneratingImage || room.isPromptApproved}
-                  placeholder={room.isGeneratingPrompt ? "Gemini is analyzing the room..." : "No prompt generated yet. Click 'Generate Prompt' below."}
-                  className={`w-full h-full min-h-[180px] p-3 text-sm rounded-lg border focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 resize-none transition-colors ${room.isPromptApproved ? 'bg-green-50 border-green-200 text-gray-700' : 'bg-white border-gray-300'
-                    }`}
-                />
-                {room.isPromptApproved && (
-                  <div className="absolute top-2 right-2 bg-green-100 text-green-800 text-xs px-2 py-1 rounded-full font-medium">
-                    Approved
+              <div className="flex flex-col gap-2 h-full">
+                <div className="flex-1 relative">
+                  <textarea
+                    ref={textareaRef}
+                    value={promptText}
+                    onChange={(e) => setPromptText(e.target.value)}
+                    disabled={room.isGeneratingPrompt || room.isGeneratingImage || room.isPromptApproved}
+                    placeholder={room.isGeneratingPrompt ? "Gemini is analyzing the room..." : "No prompt generated yet. Click 'Generate Prompt' below."}
+                    className={`w-full h-full min-h-[180px] p-3 text-sm rounded-lg border focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 resize-none transition-colors ${room.isPromptApproved ? 'bg-green-50 border-green-200 text-gray-700' : 'bg-white border-gray-300'
+                      }`}
+                  />
+                  {room.isPromptApproved && (
+                    <div className="absolute top-2 right-2 bg-green-100 text-green-800 text-xs px-2 py-1 rounded-full font-medium">
+                      Approved
+                    </div>
+                  )}
+                </div>
+
+                {/* Prompt Refinement Input (Visible when prompt exists but not generating image) */}
+                {room.generatedPrompt && !room.isGeneratingImage && !room.isPromptApproved && (
+                  <div className="mt-2 flex gap-2">
+                    <input
+                      type="text"
+                      value={refineText}
+                      onChange={(e) => setRefineText(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && handleRefinePrompt()}
+                      disabled={isRefining}
+                      placeholder="Refine prompt (e.g. 'Make the sofa blue', 'Add a plant')"
+                      className="flex-1 rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border"
+                    />
+                    <button
+                      onClick={handleRefinePrompt}
+                      disabled={isRefining || !refineText.trim()}
+                      className="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50"
+                    >
+                      {isRefining ? (
+                        <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                        </svg>
+                      ) : (
+                        <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+                      )}
+                    </button>
                   </div>
                 )}
               </div>
-
-              {/* Prompt Refinement Input (Visible when prompt exists but not generating image) */}
-              {room.generatedPrompt && !room.isGeneratingImage && !room.isPromptApproved && (
-                <div className="mt-2 flex gap-2">
-                  <input
-                    type="text"
-                    value={refineText}
-                    onChange={(e) => setRefineText(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && handleRefinePrompt()}
-                    disabled={isRefining}
-                    placeholder="Refine prompt (e.g. 'Make the sofa blue', 'Add a plant')"
-                    className="flex-1 rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border"
-                  />
-                  <button
-                    onClick={handleRefinePrompt}
-                    disabled={isRefining || !refineText.trim()}
-                    className="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50"
-                  >
-                    {isRefining ? (
-                      <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                      </svg>
-                    ) : (
-                      <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
-                    )}
-                  </button>
-                </div>
-              )}
             </>
           )}
         </div>
       </div>
 
       {/* Footer / Actions */}
-      <div className="bg-gray-50 px-4 py-3 border-t border-gray-100 flex flex-wrap gap-2 justify-end">
+      <div className="bg-gray-50 px-4 py-3 border-t border-gray-100 flex flex-wrap items-center gap-2 justify-end">
         {room.error && (
-          <span className="text-red-600 text-sm mr-auto self-center flex items-center gap-1">
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-            {room.error}
+          <span className="text-red-600 text-sm mr-auto flex items-center gap-1" title={room.error}>
+            <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+            {toReadableError(room.error)}
+            <button
+              onClick={() => onUpdate(room.id, { error: undefined })}
+              className="ml-1 p-0.5 rounded text-red-400 hover:text-red-600 hover:bg-red-50"
+              title="Dismiss error"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
+            </button>
           </span>
         )}
 
+        {/* State 0: Generating Prompt */}
+        {footerPhase === 'generatingPrompt' && (
+          <button disabled className="px-4 py-2 bg-indigo-50 text-indigo-700 text-sm font-medium rounded-md cursor-wait flex items-center gap-2">
+            <svg className="animate-spin h-4 w-4 text-indigo-700" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            Generating Prompt...
+          </button>
+        )}
+
         {/* State 1: No Prompt Generated Yet */}
-        {!room.generatedPrompt && !room.isGeneratingPrompt && (
+        {footerPhase === 'noPrompt' && (
           <div className="flex flex-col gap-2 w-full sm:w-auto items-end">
             {renderReferencePicker()}
             <textarea
@@ -806,7 +891,8 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, referenceOptions = [], apiUsa
               className="w-full sm:w-80 text-sm border-gray-300 rounded-md focus:ring-indigo-500 focus:border-indigo-500 border p-2 h-20 resize-none"
             />
             <div className="flex flex-wrap gap-2 justify-end w-full sm:w-auto">
-              {renderUploadButton('Upload Photo')}
+              {renderBackToRenderButton()}
+              {renderUploadButton('Upload Staged Image')}
               <button
                 onClick={handleGeneratePrompt}
                 className="px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-md hover:bg-indigo-700 shadow-sm"
@@ -818,10 +904,11 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, referenceOptions = [], apiUsa
         )}
 
         {/* State 2: Prompt Generated, Not Approved */}
-        {room.generatedPrompt && !room.isPromptApproved && !room.isGeneratingImage && (
+        {footerPhase === 'promptReady' && (
           <>
             {renderReferencePicker()}
-            {renderUploadButton('Upload Photo')}
+            {renderBackToRenderButton()}
+            {renderUploadButton('Upload Staged Image')}
             <button
               onClick={handleGeneratePrompt}
               className="px-3 py-2 text-gray-700 hover:bg-white hover:text-gray-900 text-sm font-medium rounded-md transition-colors border border-transparent hover:border-gray-200"
@@ -846,9 +933,10 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, referenceOptions = [], apiUsa
         )}
 
         {/* State 3: Prompt Approved, Ready for Image Gen */}
-        {room.isPromptApproved && !room.generatedImageUrl && !room.isGeneratingImage && (
+        {footerPhase === 'promptApproved' && (
           <>
-            {renderUploadButton('Upload Photo')}
+            {renderBackToRenderButton()}
+            {renderUploadButton('Upload Staged Image')}
             <button
               onClick={() => onUpdate(room.id, { isPromptApproved: false })}
               className="px-3 py-2 text-sm text-gray-500 hover:text-gray-700"
@@ -866,7 +954,7 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, referenceOptions = [], apiUsa
         )}
 
         {/* State 4: Generating Image */}
-        {room.isGeneratingImage && (
+        {footerPhase === 'generatingImage' && (
           <button disabled className="px-4 py-2 bg-indigo-50 text-indigo-700 text-sm font-medium rounded-md cursor-wait flex items-center gap-2">
             <svg className="animate-spin h-4 w-4 text-indigo-700" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
@@ -877,7 +965,7 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, referenceOptions = [], apiUsa
         )}
 
         {/* State 5: Image Done */}
-        {room.generatedImageUrl && !room.isEditingImage && (
+        {footerPhase === 'imageDone' && (
           <>
             {isCurrentInOutput ? (
               <button
@@ -914,7 +1002,8 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, referenceOptions = [], apiUsa
               {isEditingMode ? 'Cancel Edit' : 'Edit Image'}
             </button>
             <button
-              onClick={() => onUpdate(room.id, { generatedImageUrl: undefined, isPromptApproved: true })}
+              // Only skip straight to "Generate Staged Image" when there is a prompt to generate from
+              onClick={() => onUpdate(room.id, { generatedImageUrl: undefined, isPromptApproved: Boolean(room.generatedPrompt), error: undefined })}
               className="px-3 py-2 text-sm text-gray-500 hover:text-gray-700"
             >
               Discard & Retry

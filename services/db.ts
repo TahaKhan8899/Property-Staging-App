@@ -132,7 +132,11 @@ export const addRoomToSession = async (
 
 export const updateRoom = async (id: string, updates: Partial<RoomData>) => {
   const { file, previewUrl, ...safeUpdates } = updates as any;
-  await api.patch(`/rooms/${id}`, safeUpdates);
+  // JSON drops undefined keys, so clears like { error: undefined } would never reach the DB; send null instead
+  const payload = Object.fromEntries(
+    Object.entries(safeUpdates).map(([k, v]) => [k, v === undefined ? null : v])
+  );
+  await api.patch(`/rooms/${id}`, payload);
 };
 
 export const saveGeneratedImage = async (
