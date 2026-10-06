@@ -23,7 +23,7 @@ Note for editors of this file: never write a dollar sign followed by a digit her
   - Report spend at every stop.
   - Say so when the set passes USD 5. Stop and ask before going past USD 8. Read spend from `GET /api/sessions/:id/usage`.
   - At most 8 image calls (render candidates plus edits) per room before you stop to ask.
-  - For a dependent angle, stop after 2 rejected rounds and propose a different method (see step 4), not another roll of the same one.
+  - For any room, after 2 rejected rounds, post a diagnosis stop (see step 5) before rendering again.
 - Retry a failed call once. If it fails again, stop and report the error text.
 - 16:9 and 2K are fixed server-side. No color, lighting or crop work; Canva does that after delivery.
 
@@ -36,7 +36,7 @@ Note for editors of this file: never write a dollar sign followed by a digit her
 - Room identity:
   - **Taha's command text wins** over what a photo seems to show.
   - File names Taha renamed (`bath`, `bed1`, `living`, `kitchen+living2`) are authoritative.
-  - Arthur's raw files have random AI names ("bright minimal entryway with window") that mean nothing. For those, identify each room type by looking at the photo, group the photos of the same space, and show the result at Stop 1. Never ask Taha to rename files first.
+  - Arthur's raw files have random AI names ("bright minimal entryway with window") that mean nothing. For those, you do the identification work: room type, camera direction and same-space grouping, from the photo's fixed features and the floor plan. Propose it at Stop 1 so Taha corrects instead of researching. Never ask Taha to rename files first.
   - If a photo seems to contradict a name Taha gave, say so as a question at Stop 1, but map it as named.
 - Room types: `Bedroom`, `Living Room`, `Kitchen`, `Bathroom`, `Patio`, `Other`. A close-up of the living area is `Living Room`. A wide open-plan shot that shows the kitchen is `Kitchen`.
 
@@ -50,13 +50,24 @@ Without a plan, infer a layout and label it `INFERRED`.
   - **The anchor is the close-up, single-room shot** (usually the living-room view). It is easier to put well-rendered furniture into the background of a wide shot than to render background furniture well in a close-up.
   - The wide shot that shows that room in the background is the dependent, and it must show the same furniture as the anchor.
 - **Style kit.** List the sessions (`GET /api/sessions`) and find earlier sets from the same building (same name prefix, e.g. `504-`). Read their rooms (`GET /api/sessions/:id/rooms`) and pull the approved dining set, sectional and counter-stool descriptions from `generatedPrompt`. Use them as the default for this set; small variations are fine.
+- **Same floor plan as an earlier set** (Taha says so, or the plans match):
+  - Map each earlier room to this set's room **by camera angle**, not by card name. Card numbers can be reversed between sets (504-202's Kitchen 1 is 504-102's Kitchen 1 angle only by luck of upload order).
+  - Open the earlier room's output image (`server/uploads/<earlier set>/output/`) and its `generatedPrompt`.
+  - Start this room's prompt from the earlier prompt's layout sentences **verbatim**. Vary only colours and small decor. Keep items the earlier prompt placed (a TV at the frame edge, art) unless this photo can't show them.
+  - If you think the layout differs, ask at Stop 1 as a Need-from-you line. If Taha says it's the same, use the earlier layout.
+  - Why: in 504-202, 504-102's Kitchen 2 prompt for the identical camera ("sofa on the right side of the room, back facing the kitchen counters… rug in the open area to the left of the sofa") was in context from the start. The agent wrote its own layout instead, and Kitchen 2 took 22 versions; the 504-102 wording fixed the sofa angle on its first use.
 
-**Stop 1: mapping check.** Use the review-stop format below. Show one table with these columns:
+**Stop 1: mapping check.** Use the review-stop format below. The table is a proposal for Taha to correct, not a question for him to research: you do the work of naming each room and where its camera faces. Show one table with these columns:
 - file;
-- identified as (type, and anchor or dependent);
-- camera direction;
-- placement plan in frame terms;
+- identified as (room type, and anchor, dependent or single);
+- camera direction (compass and which plan wall is the back wall), from the floor plan and fixed features (windows, doors, appliances);
+- placement plan in frame terms, with each seating group's facing direction in room terms (see step 3);
 - confidence (mark anything under 65%).
+
+Rules:
+- Where Taha labeled the files or named rooms in his command, those labels win; just confirm them.
+- Any room type, camera direction or placement under 65% gets its own Need-from-you line with your proposal ("Kitchen 2 sofa: right side, back to the counters, front facing the left wall. OK?"). Never put a low-confidence layout only under "Also check for". 504-202's Kitchen 2 sofa sat at 55% there, and round 1 rendered it wrong.
+- For a same-plan set, show which earlier room maps to which room, by camera angle.
 
 Add the style-kit picks in one line. Wait for Taha.
 
@@ -70,11 +81,12 @@ Add the style-kit picks in one line. Wait for Taha.
   - State architecture counts from the original, e.g. "peninsula face: one drawer over a two-door cabinet beside the dishwasher".
   - Don't rely on counts for decor. The model ignores "exactly two stools".
   - Patios: if a divider railing separates a neighbour's patio, say "stage only the near side of the divider".
+- **Layout language.** Give each piece's position in frame terms, but its **facing direction in room terms**: name the wall or fixture it faces or backs onto ("sofa back to the kitchen counters, front facing the wall just outside the left edge"). Never use "camera side", "toward the camera" or "foreground side" for which way furniture faces, and never "rotate". In 504-202, "rug on the camera side of the sofa" turned the whole group toward the lens in every render until it was replaced.
 - Read every prompt back against two things, and fix the text by hand instead of paying for a new prompt call:
   - **The mapping.** It must not contradict the plan or carry a stale line such as "no TV" that no longer applies.
   - **The system prompt rules** in `shared/constants.js`. Watch for:
     - towels on hooks beside art (504-201's bath prompt asked for exactly that);
-    - a bare wall left without art or shelves;
+    - a bare wall left without art or shelves. Never replace the designer's art or shelves with "leave the wall bare" unless the wall has no room for them. In 504-202 the agent did that on Kitchen 2's left wall, and Taha asked for art there at the end (one extra edit and round);
     - kitchen styling dropped;
     - stools on the cabinet side.
 - Then approve: `PUT /api/rooms/:id/prompt` `{"prompt": "...", "approve": true}` (never PATCH `generatedPrompt`/`initialPrompt` directly).
@@ -84,9 +96,11 @@ Add the style-kit picks in one line. Wait for Taha.
 - QA every render by opening the JPEG under `server/uploads/<set>/staged/` next to the original. Findings are flags for Taha, never automatic fixes.
 
 #### QA: Blocking (never recommend accepting a render with one of these)
+- **Layout.** The layout contradicts the mapping or the anchor: a piece on the wrong wall, crammed into a corner, an empty centre floor where the plan has furniture.
+- **Orientation.** A sofa, rug or seating group visibly angled toward the lens instead of squared to its wall. Arthur notices this, so it is never FYI. Taha rejected 504-202 Kitchen 2 v5, v13 and v15 for it.
 - **Framing.** A door, cabinet or appliance at a frame edge has dropped out, or less floor and depth are visible than in the original (zoomed or compressed). Taha rejected four kitchen picks in 504-201 for this.
 - **Architecture counts.** Cabinet doors and drawers on every face (peninsula and island faces especially), window widths, door count, sink count.
-- **Changed fixtures.** Counters, appliances or fixtures that differ from the original; a doorway that disappeared.
+- **Changed fixtures.** Counters, appliances or fixtures that differ from the original; a doorway that disappeared. Small hardware (a wall hook, a towel ring) is FYI.
 - **Neighbour space.** Anything staged past a divider railing or in a space outside the unit.
 - **Rule breaks.** A clear break of a system-prompt rule: towel on a hook beside art, toilet lid open, a large bare wall, stools on the cabinet side or in front of the dishwasher.
 
@@ -94,39 +108,65 @@ Add the style-kit picks in one line. Wait for Taha.
 - Subtle decor drift between angles: art frame, rug tone, pot colour, small styling. Taha judges angles side by side, and "nearly identical" is the bar.
 - Stool count. Two or three is fine, as long as both angles of the same room match.
 - Small ceiling items: an extra light, a missing smoke detector.
+- Small missing hardware: a wall hook, a towel ring. Taha accepted 504-202's bath without its hook.
+
+#### Picking between candidates
+After the Blocking list, prefer, in this order:
+1. Sofa, rug and coffee table squared to their wall, not to the lens.
+2. On a dependent, the visible dining chairs match the anchor's count (all four showing beats one hidden behind the table).
+3. Furniture identity with the anchor (see step 4).
+4. Framing closest to the original.
+
+Taha chose 504-202 Kitchen 2 v20 over the agent's v21 for its four visible chairs and its sofa and rug tilt.
 
 **Stop 2: anchor review.** Use the review-stop format.
 - Per room: versions, one line on what's right, Blocking flags, FYI flags, and your pick. Taha picks the final ones.
 - Record each pick's version id; you don't need to restore it (later calls target versions directly).
 - Ask Taha to lock the anchor first. As soon as he does, start the dependent (step 4) in the same turn as the revisions on the other rooms.
+- **Same-room pairs without a planned anchor** (two bedroom angles, for example): the angle Taha accepts first becomes the anchor, and the other becomes the dependent. State the assignment at the stop ("Bedroom 3 is accepted, so it is the anchor; Bedroom 2 will be matched to it"). Don't re-render the accepted angle or flip the roles unless Taha asks.
 
 ### 4. Dependent angles
 - Only start once the anchor is final, including small decor edits. In 504-102, Kitchen 2 cost 12 renders because Kitchen 1 kept changing under it.
-- Link it with `PATCH /api/rooms/:dependentId` `{"referenceRoomId": "<anchorId>"}`. The link stays for the record; never PATCH it to null and back.
-- **Default: text-only.**
+- Link it with `PATCH /api/rooms/:dependentId` `{"referenceRoomId": "<anchorId>"}` **before its first prompt or render**. The link stays for the record; never PATCH it to null and back. 504-202's Kitchen 2 rendered round 1 unlinked, so `referenceMode` was ignored and nothing recorded which mode ran.
+- **Default: text-only** (except open-plan dependents; see below).
   - Send `"referenceMode": "text"` on both `/prompt` and `/render`. The render then uses only the dependent's own photo, which keeps its lens.
   - In 504-201, all 8 kitchen renders made with the anchor as a reference image came out tighter than the original. 3 of 6 text-only renders held the lens.
-- The prompt comes from `POST /prompt` `{"referenceMode": "text", "userComments": "..."}`, so the designer prompt still adds the room-type staging (kitchen counter styling, runner, towel, stools). Hand-written dependent prompts in 504-201 dropped all of it. `userComments` must:
-  - Describe each visible anchor piece from Taha's picked anchor version by shape, material, colour and frame position. Include the details that make it read as the same piece: legs or no legs, table height, which side of the TV the plant stands, the art frame.
-  - Match the anchor's stool count, if stools show in both angles.
-  - Give the step 3 protections: frame edges and architecture counts.
-  - Leave out anchor items that can't be seen from this angle.
-- Read the prompt back as in step 3, approve it, and render `{"candidates": 3}`.
+- **Open-plan dependents with large anchor pieces** (a sectional, a dining set): run round 1 as `"referenceMode": ["text", "reference", "reference"]` with `"referenceVersionId": "<picked anchor version>"`. Text mode keeps the lens; reference mode is the only one that has copied exact furniture (504-202 Kitchen 2 v20, v21; Bedroom 3 v3).
+- Every round that includes reference mode uses **3 candidates**. Reference mode broke the camera in 6 of 14 Kitchen 2 candidates, and in 2 of 7 two-candidate rounds both failed.
+- **A layout failure is not a mode failure.** If the camera held but the furniture is in the wrong place, fix the layout text and keep the mode. 504-202's round 1 was text-only, held the camera in all three candidates, and failed only because the prompt put the sofa in the corner.
+- The prompt comes from `POST /prompt` `{"referenceMode": "text", "userComments": "..."}`, so the designer prompt still adds the room-type staging (kitchen counter styling, runner, towel, stools). Hand-written dependent prompts in 504-201 dropped all of it. Use the same prompt for the reference candidates. `userComments` must have three blocks, so a later round can change one block at a time:
+  1. **Layout:** the style kit's layout sentences for this camera angle, or the Stop 1 placement, in room terms (step 3).
+  2. **Anchor pieces, from pixels.** Open Taha's picked anchor version and describe each visible piece from the image, never from the anchor's prompt or an earlier description. Give colour with a comparison ("muted sage grey-green, lighter and greyer than forest green"), piping, arm style, table base ("chunky base of two crossed wooden slabs, not a slim X frame"), chair back ("tall egg-shaped back"), leg colour, legs or no legs, which side of the TV the plant stands. In reference mode, text that contradicts image 1 overrides it: 504-202 Kitchen 2 v4 to v17 copied "forest green, white piping, X-base" from the text, not the sage sofa in image 1. Literal descriptions matched on the first try.
+  3. **Protections:** the step 3 frame edges and architecture counts. For an oblique camera, name the landmarks at both frame edges ("hallway, electrical panel, pantry door, and the door and switch at the left edge stay exactly where they are").
+  Also match the anchor's stool count if stools show in both angles, and leave out anchor items that can't be seen from this angle.
+- Read the prompt back as in step 3, approve it, and render `{"candidates": 3}` (or the mixed modes above).
 - QA as in step 3.
   - Small drift from the anchor (an art frame, a rug tone) is fine: FYI only.
   - Noticeable mismatches (a pot on the wrong side of the TV, legs on a coffee table that has none) get fixed with **one** edit after Taha picks, all items in one call.
 - If text-only fails twice on furniture match, propose reference mode for one candidate: `"referenceMode": ["text", "text", "reference"]` with `"referenceVersionId": "<picked anchor version>"`. Without `referenceVersionId` the server uses whatever the anchor card currently shows.
+- Each version's `promptSnapshot` records `referenceMode`, `referenceRoomId` and `referenceVersionId`. Use them to report which mode produced which version.
 
 **Stop 3: dependent review.** Same format as Stop 2.
 
 ### 5. Revisions (Taha's notes, or Arthur's round)
 
-Edits never move furniture. In 504-201, a single edit with two moves left both pieces where they were. When Taha says "edit" but a change moves something, split it: additions, removals and swaps go in one edit; anything that changes position goes in a fresh render. Tell him in one line.
+**Moves: decline through edits.** Edits don't move furniture: 504-201 v11 (two moves) and 504-202 Kitchen 2 v9 left every piece where it was. When Taha asks for an edit that shifts something, say so in one line and offer a fresh render; split the request so additions, removals and swaps still go in one edit.
+
+**Swaps: run them.** Replacing an item through an edit is generally fine. If a swap of a large piece fails once, don't retry the edit: go to a fresh render with a pixel-level description of the piece (step 4). In 504-202, two sofa, table and chair swaps with the anchor as reference (v18, v19) didn't take, and the next fresh render matched all three.
+
+At every stop, say what each edit used: "edit of v17, reference: Kitchen 1 v5". Taha asked at 504-202 whether v18 had used a reference; it had.
+
+**Diagnosis stop.** After 2 rejected rounds on any room, post a stop before rendering again, in three lines:
+1. What changed between the rounds, and what came back.
+2. What that shows: layout text, furniture description, mode, or a model roll.
+3. The **one** variable group you'll change next: layout, anchor pieces, protections, or mode.
+
+Before writing it, compare this room's prompt with the style kit's working prompt for the same angle, if there is one. Change one block per round: 504-202's round 3 changed five things at once, and the cause couldn't be isolated. Don't discourage a re-render that changes a different variable. In 504-202 the agent asked Taha to stop re-rendering after round 4, and the next three rounds kept the camera in 5 of 6 candidates.
 
 | Change | Do |
 |---|---|
-| Furniture position, layout, or which wall | **Fresh render from the original.** Write the prompt by hand and send it as `POST /render` `{"prompt": "...", "candidates": 2}` (one-off; doesn't change the room's saved prompt). Use `PUT /prompt` instead if it should become the room's prompt. On a dependent, add `"referenceMode": "text"`. |
-| Small addition, removal or swap (TV, art, dining set, counter decor, throw colour) | **Edit.** `POST /api/rooms/:id/edit` `{"instructions": "<numbered, literal changes anchored to frame positions>"}`. Up to about 4 changes per call. Every edit pass degrades colour a little, so don't chain more than 2 to 3 edits on one image. Re-render instead. |
+| Furniture position, layout, or which wall | **Fresh render from the original.** Write the prompt by hand and send it as `POST /render` `{"prompt": "...", "candidates": 2}` (one-off; doesn't change the room's saved prompt). Use `PUT /prompt` instead if it should become the room's prompt. On a dependent, keep its step 4 mode (text, or the text and reference mix with 3 candidates). |
+| Addition, removal or swap (TV, art, dining set, counter decor, throw colour) | **Edit.** `POST /api/rooms/:id/edit` `{"instructions": "<numbered, literal changes anchored to frame positions>"}`. Up to about 4 changes per call. Every edit pass degrades colour a little, so don't chain more than 2 to 3 edits on one image. Re-render instead. If a large-piece swap fails once, re-render with a pixel-level description. |
 | Make one angle's decor match the other angle | Only when the mismatch is noticeable (see FYI). Edit one angle, then edit the other with the first as reference: `POST /edit` `{"instructions": "...match the <item> in the reference image...", "referenceRoomId": "<other angle>", "referenceVersionId": "<its new version>"}`. Works in either direction. The instructions must name what to match. |
 | Take an item from another version of the same room (the chair from v2 into v1) | `POST /edit` `{"instructions": "...use the <item> from the reference image...", "referenceRoomId": "<this room>", "referenceVersionId": "<the version that has it>", "baseVersionId": "<the version to edit>"}`. The reference must differ from the version being edited. |
 | Flash test (plan item 3.3) | Add `"fast": true` to a small `POST /edit` only when Taha asks. It uses the Flash image model: faster and cheaper, quality unproven. Say in the review that the edit was a fast one. |
@@ -144,6 +184,7 @@ Edits never move furniture. In 504-201, a single edit with two moves left both p
 - List every place where Taha's pick differed from yours, and why if you know. That list is how this skill improves.
 - Tell Taha that ZIPs are available from the session header: "Download Staged ZIP" and "Download Compressed ZIP".
 - Remind him: Canva color pass last, once, on finals only.
+- Cross-angle lighting match (the dependent's light and shadows against the anchor's) happens in that Canva pass, not through re-renders: separate render calls always differ in lighting. Budget time for it in the report. 504-202's Kitchen 2 took 10 minutes and 4 uploads.
 
 ## Review-stop format
 
@@ -190,6 +231,25 @@ Also check for: neighbour areas, dividers, and anything I called clean.
   - stools on the living side of the peninsula;
   - walnut pedestal table with cream chairs;
   - don't flag subtle cross-angle decor drift.
+
+## Worked example: 504-202
+
+- **Photos:** `bath`, `bed1-east`, `bed2-north-facing-closet`, `bed2-north-facing-patio`, `east-patio`, `kitchen-living1-from-entry-facing-fridge`, `kitchen-living2-from-north-east-looking-south-west`, plus a floor plan. Same plan as 504-102.
+- **Result:** 84 minutes, USD 6.27, 50 calls (0 failed), 46 versions. Six of seven rooms were final by minute 40. Bath and Bedroom 1 were accepted on v1.
+- **Kitchen 2 (the dependent):** 22 AI versions, USD 3.19, 34 minutes of rounds plus 10 of Canva. The causes, in order:
+  - The agent wrote its own layout instead of 504-102's prompt for the same camera.
+  - Its layout said "rug on the camera side", which turned the group toward the lens.
+  - Its furniture text didn't match the anchor's pixels.
+  - Reference mode broke the camera in 6 of 14 candidates.
+  - It used edits for a move and for two large swaps.
+- **Bedroom 2 pair:** Taha accepted the closet angle first, then re-anchored on the entry-door angle's v5 and had the closet angle redone. Text mode fixed the entry-door angle after two reference renders cropped its doorway.
+- **Taha's corrections, now rules:**
+  - room-relative layout wording;
+  - furniture described from the anchor's pixels;
+  - sofa and rug orientation is Blocking;
+  - a dining-chair count that matches the anchor;
+  - don't strip designer art;
+  - the first accepted angle is the anchor.
 
 ## Known gaps (update this list as plan items land)
 - No floor-plan input to the server's prompt writer. The plan reaches it only through `userComments`.
