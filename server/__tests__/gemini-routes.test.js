@@ -425,6 +425,81 @@ describe('edit references (1.2)', () => {
     });
 });
 
+describe('render referenceMode (1.4b)', () => {
+    // Anchor with one render and a dependent linked to it, with an approved prompt
+    const linkedPair = async () => {
+        const s = await createSession(ctx.app);
+        const anchor = await uploadRoom(ctx.app, s.id, 'Living Room');
+        await saveGenerated(ctx.app, anchor.id);
+        const dep = await uploadRoom(ctx.app, s.id, 'Kitchen');
+        ctx.db.prepare('UPDATE rooms SET referenceRoomId = ?, generatedPrompt = ?, isPromptApproved = 1 WHERE id = ?').run(anchor.id, 'go', dep.id);
+        return { s, anchor, dep };
+    };
+    const notesOf = (roomId) => Object.fromEntries(ctx.db.prepare('SELECT description, promptSnapshot FROM image_versions WHERE roomId = ?').all(roomId)
+        .map(v => [v.description, JSON.parse(v.promptSnapshot).notes]));
+
+    it("'text' renders a linked room from its photo alone, notes it, and keeps the link", async () => {
+        const { anchor, dep } = await linkedPair();
+        const res = await request(ctx.app).post(`/api/rooms/${dep.id}/render`).send({ referenceMode: 'text', candidates: 2 }).expect(200);
+        const images = calls.filter(c => c.type === 'image');
+        expect(images).toHaveLength(2);
+        images.forEach(c => expect(c.req.contents.parts.map(p => Object.keys(p)[0])).toEqual(['inlineData', 'text']));
+        expect(res.body.versions.map(v => v.promptSnapshot.notes).sort()).toEqual([
+            'Text mode: reference not sent; Candidate 1 of 2',
+            'Text mode: reference not sent; Candidate 2 of 2'
+        ]);
+        expect(getRoom(ctx.db, dep.id).referenceRoomId).toBe(anchor.id);
+    });
+
+    it('an array mixes modes per candidate and sets the candidate count', async () => {
+        const { dep } = await linkedPair();
+        const res = await request(ctx.app).post(`/api/rooms/${dep.id}/render`).send({ referenceMode: ['text', 'text', 'reference'] }).expect(200);
+        expect(res.body.requested).toBe(3);
+        expect(calls.map(c => c.req.contents.parts.length).sort()).toEqual([2, 2, 3]);
+        expect(notesOf(dep.id)).toEqual({
+            'Candidate 1 of 3': 'Text mode: reference not sent; Candidate 1 of 3',
+            'Candidate 2 of 3': 'Text mode: reference not sent; Candidate 2 of 3',
+            'Candidate 3 of 3': 'Reference angle: Living Room 1 v1; Candidate 3 of 3'
+        });
+    });
+
+    it("'reference' or no referenceMode behaves as before", async () => {
+        const { dep } = await linkedPair();
+        await request(ctx.app).post(`/api/rooms/${dep.id}/render`).send({ referenceMode: 'reference' }).expect(200);
+        expect(calls[0].req.contents.parts).toHaveLength(3);
+    });
+
+    it("'text' on an unlinked room adds no note", async () => {
+        const { r } = await approvedRoom();
+        const res = await request(ctx.app).post(`/api/rooms/${r.id}/render`).send({ referenceMode: 'text' }).expect(200);
+        expect(res.body.versions[0].promptSnapshot.notes).toBeUndefined();
+    });
+
+    it('rejects bad modes, empty or long arrays, and a mismatched candidates count with 400 and no call', async () => {
+        const { dep } = await linkedPair();
+        for (const body of [
+            { referenceMode: 'none' },
+            { referenceMode: [] },
+            { referenceMode: ['text', 'text', 'text', 'text'] },
+            { referenceMode: ['text', 'bogus'] },
+            { referenceMode: ['text', 'reference'], candidates: 3 }
+        ]) {
+            await request(ctx.app).post(`/api/rooms/${dep.id}/render`).send(body).expect(400);
+        }
+        await request(ctx.app).post(`/api/rooms/${dep.id}/prompt`).send({ referenceMode: ['text'] }).expect(400);
+        expect(calls).toHaveLength(0);
+    });
+
+    it("prompt with 'text' uses the designer writer, not the reference-angle one", async () => {
+        const { dep } = await linkedPair();
+        await request(ctx.app).post(`/api/rooms/${dep.id}/prompt`).send({ referenceMode: 'text', userComments: 'sofa on the right' }).expect(200);
+        const parts = calls[0].req.contents.parts;
+        expect(parts).toHaveLength(2);
+        expect(parts[1].text).toContain('sofa on the right');
+        expect(apiRows(dep.id)[0].kind).toBe('prompt');
+    });
+});
+
 describe('PUT /api/rooms/:id/prompt', () => {
     it('sets generatedPrompt and approval but never initialPrompt', async () => {
         const { r } = await approvedRoom();

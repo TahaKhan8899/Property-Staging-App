@@ -7,6 +7,24 @@ import { createGemini, isGeminiConfigured } from './gemini.js';
 import { guessMimeType } from '../shared/gemini-core.js';
 
 const MAX_CANDIDATES = 3;
+const REFERENCE_MODES = ['reference', 'text'];
+
+// referenceMode on /render: 'reference' (default: send the linked reference room's render as Image 1)
+// or 'text' (single-image render from this room's photo and prompt only, even when the room is linked).
+// An array gives one mode per candidate and sets the candidate count. Returns { error } or { modes }.
+const parseReferenceModes = (body) => {
+    const raw = body?.referenceMode;
+    const requested = parseInt(body?.candidates, 10);
+    if (Array.isArray(raw)) {
+        if (raw.length < 1 || raw.length > MAX_CANDIDATES) return { error: `referenceMode array must have 1 to ${MAX_CANDIDATES} entries` };
+        if (!raw.every(m => REFERENCE_MODES.includes(m))) return { error: `referenceMode entries must be one of: ${REFERENCE_MODES.join(', ')}` };
+        if (body.candidates !== undefined && requested !== raw.length) return { error: 'candidates must match the length of the referenceMode array' };
+        return { modes: raw };
+    }
+    if (raw !== undefined && !REFERENCE_MODES.includes(raw)) return { error: `referenceMode must be one of: ${REFERENCE_MODES.join(', ')}` };
+    const n = Math.min(MAX_CANDIDATES, Math.max(1, requested || 1));
+    return { modes: Array(n).fill(raw ?? 'reference') };
+};
 
 export const registerGeminiRoutes = (app, { db, getUploadFilePath, saveGeneratedBuffer, insertApiCall }) => {
     const gemini = createGemini({
@@ -124,9 +142,14 @@ export const registerGeminiRoutes = (app, { db, getUploadFilePath, saveGenerated
     app.post('/api/rooms/:id/prompt', (req, res) => runOperation(req, res, {
         kind: 'prompt',
         flag: 'isGeneratingPrompt',
-        validate: (room) => checkReferenceVersion(room, req.body?.referenceVersionId),
+        validate: (room) => {
+            const mode = req.body?.referenceMode;
+            if (mode !== undefined && !REFERENCE_MODES.includes(mode)) return { error: `referenceMode must be one of: ${REFERENCE_MODES.join(', ')}` };
+            return checkReferenceVersion(room, req.body?.referenceVersionId);
+        },
         execute: async ({ room }) => {
-            const reference = resolveReference(room, req.body?.referenceVersionId);
+            // referenceMode 'text': the designer prompt from this photo alone, even when the room is linked
+            const reference = req.body?.referenceMode === 'text' ? null : resolveReference(room, req.body?.referenceVersionId);
             const raw = await gemini.generatePrompt({
                 roomId: room.id,
                 image: readImage(room.filePath),
@@ -173,6 +196,7 @@ export const registerGeminiRoutes = (app, { db, getUploadFilePath, saveGenerated
     // Render from the approved prompt, or from an explicit `prompt` (which counts as the approval and is
     // not saved to the room). candidates 1..3 run in parallel; each becomes its own version.
     // referenceVersionId picks which render of the reference room is Image 1 (default: its current one).
+    // referenceMode ('reference' | 'text' | one per candidate) can skip the reference image; see parseReferenceModes.
     app.post('/api/rooms/:id/render', (req, res) => runOperation(req, res, {
         kind: 'render',
         flag: 'isGeneratingImage',
@@ -183,17 +207,21 @@ export const registerGeminiRoutes = (app, { db, getUploadFilePath, saveGenerated
                 if (!room.generatedPrompt?.trim()) return { error: 'Room has no prompt yet' };
                 if (!room.isPromptApproved) return { error: 'Prompt is not approved' };
             }
+            const { error } = parseReferenceModes(req.body);
+            if (error) return { error };
             return checkReferenceVersion(room, req.body?.referenceVersionId);
         },
         execute: async ({ send, room }) => {
-            const n = Math.min(MAX_CANDIDATES, Math.max(1, parseInt(req.body?.candidates, 10) || 1));
+            const { modes } = parseReferenceModes(req.body);
+            const n = modes.length;
             const manualPrompt = req.body?.prompt?.trim();
             const prompt = manualPrompt || room.generatedPrompt;
             const image = readImage(room.filePath);
-            const reference = resolveReference(room, req.body?.referenceVersionId);
+            const linkedReference = modes.includes('reference') ? resolveReference(room, req.body?.referenceVersionId) : null;
 
             const outcomes = await Promise.allSettled(Array.from({ length: n }, async (_, i) => {
                 const k = i + 1;
+                const reference = modes[i] === 'reference' ? linkedReference : null;
                 try {
                     const buffer = await gemini.renderImage({
                         roomId: room.id,
@@ -205,6 +233,7 @@ export const registerGeminiRoutes = (app, { db, getUploadFilePath, saveGenerated
                     const notes = [
                         manualPrompt ? 'Prompt: manual' : null,
                         reference ? `Reference angle: ${reference.label}` : null,
+                        modes[i] === 'text' && room.referenceRoomId ? 'Text mode: reference not sent' : null,
                         n > 1 ? `Candidate ${k} of ${n}` : null
                     ].filter(Boolean).join('; ');
                     const saved = saveGeneratedBuffer(

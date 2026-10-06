@@ -51,6 +51,7 @@ Without a plan, infer a layout and label it `INFERRED`.
 ### 4. Dependent angles
 - Only start once the anchor is final, including small decor edits. In 504-102, Kitchen 2 cost 12 renders because Kitchen 1 kept changing under it.
 - Link it with `PATCH /api/rooms/:dependentId` `{"referenceRoomId": "<anchorId>"}`.
+- To render a linked dependent without the reference image (text-only, which keeps the original lens), send `"referenceMode": "text"` on `/prompt` and `/render`, or one mode per candidate such as `["text", "text", "reference"]` on `/render`. The link stays; never PATCH `referenceRoomId` to null and back.
 - Always pass `referenceVersionId` = Taha's picked anchor version on both `/prompt` and `/render`. Without it the server uses whatever the anchor card currently shows, which Taha may have changed by browsing versions.
 - `POST /prompt` with `userComments` that do two things:
   - give the plan-based placement for this angle;

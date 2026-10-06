@@ -77,8 +77,15 @@ const postWithProgress = async <T>(
 
 const withFullUrls = <T extends { url: string }>(v: T): T => ({ ...v, url: getFullUrl(v.url) || v.url });
 
-// referenceVersionId: which render of the reference room to use (default: its current one)
-export const generateRoomPrompt = (roomId: string, options: { userComments?: string; referenceVersionId?: string } = {}) =>
+// 'reference' sends a linked room's reference render as Image 1 (the default); 'text' skips it
+export type ReferenceMode = 'reference' | 'text';
+
+// referenceVersionId: which render of the reference room to use (default: its current one).
+// referenceMode 'text': write the designer prompt from this photo alone, even for a linked room.
+export const generateRoomPrompt = (
+  roomId: string,
+  options: { userComments?: string; referenceVersionId?: string; referenceMode?: ReferenceMode } = {}
+) =>
   postWithProgress<{ generatedPrompt: string; initialPrompt: string }>(`/rooms/${roomId}/prompt`, options);
 
 export const refineRoomPrompt = (roomId: string, currentPrompt: string, feedback: string) =>
@@ -89,6 +96,8 @@ export const renderRoom = async (
   options: {
     candidates?: number;
     referenceVersionId?: string;
+    // One mode for all candidates, or one per candidate (the array length is the candidate count)
+    referenceMode?: ReferenceMode | ReferenceMode[];
     onProgress?: ProgressHandler;
     onCandidate?: (e: CandidateEvent) => void;
   } = {}
@@ -101,8 +110,9 @@ export const renderRoom = async (
     failed: number;
     errors: string[];
   }>(`/rooms/${roomId}/render`, {
-    candidates: options.candidates ?? 1,
-    referenceVersionId: options.referenceVersionId
+    candidates: options.candidates ?? (Array.isArray(options.referenceMode) ? options.referenceMode.length : 1),
+    referenceVersionId: options.referenceVersionId,
+    referenceMode: options.referenceMode
   }, options.onProgress, options.onCandidate);
   return { ...withFullUrls(res), versions: res.versions.map(withFullUrls) };
 };
