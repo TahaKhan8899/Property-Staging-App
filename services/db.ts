@@ -85,7 +85,7 @@ export const reorderSessions = async (orderedIds: string[]) => {
 // --- Rooms ---
 
 // Helper to correct URLs
-const getFullUrl = (path: string) => {
+export const getFullUrl = (path: string) => {
   if (!path) return undefined;
   if (path.startsWith('http')) return path;
   if (path.startsWith('data:')) return path;
@@ -137,19 +137,6 @@ export const updateRoom = async (id: string, updates: Partial<RoomData>) => {
     Object.entries(safeUpdates).map(([k, v]) => [k, v === undefined ? null : v])
   );
   await api.patch(`/rooms/${id}`, payload);
-};
-
-export const saveGeneratedImage = async (
-  id: string,
-  imageBase64: string,
-  description?: string,
-  promptSnapshot?: PromptSnapshot | Record<string, any> | string
-): Promise<{ url: string; version: any }> => {
-  const res = await api.post(`/rooms/${id}/generated`, { imageBase64, description, promptSnapshot });
-  return {
-    url: getFullUrl(res.url) || res.url,
-    version: res.version
-  };
 };
 
 export const uploadStagedImage = async (
@@ -204,6 +191,8 @@ export const removeRoomFromOutput = async (roomId: string) => {
 
 // --- API Usage / Cost Tracking ---
 
+// Shape of one api_calls row as written by the server (server/gemini.js). kind must be extended here
+// and in server/db.js whenever a new kind of Gemini call is added.
 export interface ApiCallLog {
   roomId?: string;
   kind: 'prompt' | 'reference_prompt' | 'refine' | 'generate' | 'edit';
@@ -227,11 +216,6 @@ export interface SessionUsage {
 }
 
 export const USAGE_LOGGED_EVENT = 'api-usage-logged';
-
-export const logApiCall = async (call: ApiCallLog) => {
-  await api.post('/usage', call);
-  window.dispatchEvent(new Event(USAGE_LOGGED_EVENT));
-};
 
 export const getSessionUsage = async (sessionId: string): Promise<SessionUsage> => {
   return await api.get(`/sessions/${sessionId}/usage`);

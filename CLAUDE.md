@@ -23,7 +23,7 @@ This is a full-stack property staging app where users upload room photos and use
 
 **Backend**: Express 5 + better-sqlite3 (port 3001). Handles session/room CRUD, file uploads (Multer), image compression (Sharp), and proxies requests to the Gemini API. Database is WAL-mode SQLite at `./database.sqlite`.
 
-**AI Integration**: `services/geminiService.ts` wraps `@google/genai`. Two Gemini models are used — one for prompt generation (text) and one for image generation (image). Model names and the image resolution constant (`2K`) are in `constants.ts`. Image generation streams interim results back to the frontend.
+**AI Integration**: All Gemini calls run on the server. `server/gemini.js` wraps `@google/genai`; `server/geminiRoutes.js` exposes `POST /api/rooms/:id/prompt`, `/refine-prompt`, `/render` (`{ candidates: 1..3 }`) and `/edit` (`{ instructions, rawPrompt?, intents? }`). Each returns JSON, or streams Server-Sent Events (`thought`, `done`, `error`) when the request sends `Accept: text/event-stream`; the UI uses SSE via `services/stagingApi.ts`, an agent or `curl` can use plain JSON. A busy room returns 409; render requires an approved prompt. Every call writes an `api_calls` row server-side, and every saved image goes through `saveGeneratedBuffer` in `server/index.js` so it gets a version and a `promptSnapshot`. Pure helpers (prompt builders, stream parsing, cost math) are in `shared/gemini-core.js`; models, pricing, `2K`/`16:9` and system prompts are in `shared/constants.js` (re-exported by `constants.ts`) so server and client share them. Two models: one text model for prompts, one image model for renders and edits.
 
 **File Storage**: Uploaded and generated images live under `server/uploads/<SessionName>/`:
 - `original/` — user-uploaded room photos
@@ -50,11 +50,10 @@ Database schema (3 tables): `sessions`, `rooms`, `image_versions` — cascading 
 
 ## API Key
 
-The Gemini API key comes from (in priority order): `window.aistudio` bridge (AI Studio), `localStorage.gemini_api_key`, or the `VITE_GEMINI_API_KEY` env var from `.env.local`. The backend also reads `GEMINI_API_KEY` from environment for server-side calls.
+`GEMINI_API_KEY` in `.env.local`, loaded by the server at startup (`process.loadEnvFile`), or from the server's environment. The browser never sees it. `GET /api/health` reports `geminiKeyConfigured`; the UI shows a blocking notice when it is false. Tests never load `.env.local` and use an injected fake client (`setGeminiClientForTests`).
 
 ## Notable Details
 
 - Session renames cascade to both the DB and the `server/uploads/` folder via a dedicated API endpoint.
 - The `services/db.ts` file is a thin fetch-based REST client — not IndexedDB (Dexie is imported but used only as a placeholder for future local caching).
-- `vite.config.ts` explicitly exposes `API_KEY` and `GEMINI_API_KEY` as globals via `define`.
 - Sharp compression runs server-side on download, not on ingest.

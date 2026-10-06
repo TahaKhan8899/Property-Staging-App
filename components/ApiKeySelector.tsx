@@ -4,29 +4,23 @@ interface ApiKeySelectorProps {
   onKeySelected: () => void;
 }
 
+// Gemini runs on the server now, so the only check is whether the server has GEMINI_API_KEY.
 const ApiKeySelector: React.FC<ApiKeySelectorProps> = ({ onKeySelected }) => {
-  const [loading, setLoading] = useState(false);
-  const [manualKey, setManualKey] = useState('');
+  const [status, setStatus] = useState<'checking' | 'missing' | 'unreachable'>('checking');
 
   const checkKey = async () => {
+    setStatus('checking');
     try {
-      // 1. Check local/env key first
-      const { getApiKey } = await import('../services/geminiService');
-      const localKey = getApiKey();
-      if (localKey) {
+      const res = await fetch('http://localhost:3001/api/health');
+      const health = await res.json();
+      if (health.geminiKeyConfigured) {
         onKeySelected();
         return;
       }
-
-      // 2. Check AI Studio (legacy/cloud env)
-      if (window.aistudio && window.aistudio.hasSelectedApiKey) {
-        const hasKey = await window.aistudio.hasSelectedApiKey();
-        if (hasKey) {
-          onKeySelected();
-        }
-      }
+      setStatus('missing');
     } catch (e) {
-      console.error("Error checking API key status", e);
+      console.error('Error checking server API key status', e);
+      setStatus('unreachable');
     }
   };
 
@@ -35,85 +29,25 @@ const ApiKeySelector: React.FC<ApiKeySelectorProps> = ({ onKeySelected }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const handleSelectKey = async () => {
-    setLoading(true);
-    try {
-      if (window.aistudio && window.aistudio.openSelectKey) {
-        await window.aistudio.openSelectKey();
-        onKeySelected();
-      } else {
-        // Fallback or explicit manual mode if not in AI Studio
-        // Just focus the input or alert if we want, but the UI has the input now
-        alert("Please enter your API key below.");
-      }
-    } catch (e) {
-      console.error("Error selecting key", e);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleManualSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (manualKey.trim()) {
-      localStorage.setItem('gemini_api_key', manualKey.trim());
-      onKeySelected();
-    }
-  };
+  if (status === 'checking') return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900 bg-opacity-90 backdrop-blur-sm">
       <div className="bg-white p-8 rounded-xl shadow-2xl max-w-md w-full text-center">
-        <div className="mb-6">
-          <svg className="w-16 h-16 mx-auto text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
-          </svg>
-        </div>
-        <h2 className="text-2xl font-bold text-gray-900 mb-2">API Key Required</h2>
+        <h2 className="text-2xl font-bold text-gray-900 mb-2">
+          {status === 'missing' ? 'Gemini API Key Missing' : 'Server Not Reachable'}
+        </h2>
         <p className="text-gray-600 mb-6">
-          To use the High-Quality Image Generation (Gemini 3 Pro / Nano Banana Pro), you must provide a valid API key.
+          {status === 'missing'
+            ? <>Add <code className="font-mono text-sm">GEMINI_API_KEY=...</code> to <code className="font-mono text-sm">.env.local</code> in the project folder, then restart the server.</>
+            : <>The API server on port 3001 did not respond. Start it with <code className="font-mono text-sm">npm run dev</code>.</>}
         </p>
-
-        {/* Only show "Select" button if we think we are in AI Studio or want to keep the option */}
-        {window.aistudio && (
-          <button
-            onClick={handleSelectKey}
-            disabled={loading}
-            className="w-full py-3 px-4 mb-4 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg shadow transition-colors disabled:opacity-50"
-          >
-            {loading ? 'Connecting...' : 'Select Paid API Key (AI Studio)'}
-          </button>
-        )}
-
-        <div className="relative">
-          <div className="absolute inset-0 flex items-center">
-            <div className="w-full border-t border-gray-300"></div>
-          </div>
-          <div className="relative flex justify-center text-sm">
-            <span className="px-2 bg-white text-gray-500">Or enter manually</span>
-          </div>
-        </div>
-
-        <form onSubmit={handleManualSubmit} className="mt-4">
-          <input
-            type="password"
-            value={manualKey}
-            onChange={(e) => setManualKey(e.target.value)}
-            placeholder="Paste your API Key here"
-            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 mb-3"
-          />
-          <button
-            type="submit"
-            disabled={!manualKey.trim()}
-            className="w-full py-2 px-4 bg-gray-800 hover:bg-gray-900 text-white font-semibold rounded-lg shadow transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            Save & Continue
-          </button>
-        </form>
-
-        <p className="mt-4 text-xs text-gray-500">
-          Learn more about billing at <a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" rel="noopener noreferrer" className="text-indigo-600 hover:underline">ai.google.dev/gemini-api/docs/billing</a>
-        </p>
+        <button
+          onClick={checkKey}
+          className="w-full py-3 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg shadow transition-colors"
+        >
+          Check Again
+        </button>
       </div>
     </div>
   );

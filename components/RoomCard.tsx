@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { RoomData, RoomType, ImageVersion, PromptSnapshot, RoomStatus } from '../types';
-import { generateStagingPrompt, generateReferenceAnglePrompt, generateStagedImage, refinePrompt, editGeneratedImage } from '../services/geminiService';
-import { saveGeneratedImage, getImageVersions, restoreImageVersion, uploadStagedImage, addRoomToOutput, removeRoomFromOutput } from '../services/db';
+import { generateRoomPrompt, refineRoomPrompt, renderRoom, editRoom } from '../services/stagingApi';
+import { getImageVersions, restoreImageVersion, uploadStagedImage, addRoomToOutput, removeRoomFromOutput } from '../services/db';
 import ImageCompareModal from './ImageCompareModal';
 import { isCurrentVersionInOutput, hasStaleOutput as isOutputStale } from '../services/outputState';
 import PromptViewerModal from './PromptViewerModal';
@@ -17,7 +17,7 @@ interface RoomCardProps {
   room: RoomData;
   referenceOptions?: ReferenceOption[]; // staged sibling rooms that can serve as Image 1
   apiUsage?: { calls: number; costUsd: number }; // logged Gemini spend for this room
-  onUpdate: (id: string, updates: Partial<RoomData>) => void;
+  onUpdate: (id: string, updates: Partial<RoomData>) => void | Promise<void>;
   onRemove: (id: string) => void;
 }
 
@@ -175,22 +175,8 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, referenceOptions = [], apiUsa
   const handleGeneratePrompt = async () => {
     onUpdate(room.id, { isGeneratingPrompt: true, error: undefined });
     try {
-      let prompt = referenceOption
-        ? await generateReferenceAnglePrompt(
-          referenceOption.url,
-          room.file || room.previewUrl,
-          room.initialThoughts,
-          room.id
-        )
-        : await generateStagingPrompt(
-          room.file || room.previewUrl,
-          room.roomType,
-          room.customLabel,
-          room.initialThoughts,
-          room.id
-        );
-      // Strip opening and closing quotes if present
-      prompt = prompt.replace(/^["']|["']$/g, '').trim();
+      // Server picks the reference-angle flow when the room has a staged reference room
+      const { generatedPrompt: prompt } = await generateRoomPrompt(room.id, room.initialThoughts);
       onUpdate(room.id, {
         generatedPrompt: prompt,
         initialPrompt: prompt, // Save original for reset
@@ -219,7 +205,7 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, referenceOptions = [], apiUsa
 
     setIsRefining(true);
     try {
-      const newPrompt = await refinePrompt(promptText, refineText, room.id);
+      const { generatedPrompt: newPrompt } = await refineRoomPrompt(room.id, promptText, refineText);
       setPromptText(newPrompt);
       setRefineText(''); // Clear input after success
       onUpdate(room.id, { generatedPrompt: newPrompt });
@@ -241,30 +227,22 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, referenceOptions = [], apiUsa
   const handleGenerateImage = async () => {
     if (!room.isPromptApproved) return;
 
-    onUpdate(room.id, { isGeneratingImage: true, error: undefined });
     setProgressThought('Initializing...');
     setInterimImageUrl(undefined);
 
     try {
-      const imageBase64 = await generateStagedImage(
-        room.file || room.previewUrl,
-        room.generatedPrompt,
-        (status, img) => {
+      // The server renders from the prompt stored in the DB, so make sure our pending writes have landed
+      await onUpdate(room.id, { isGeneratingImage: true, error: undefined });
+      const { url, currentVersionId } = await renderRoom(room.id, {
+        onProgress: (status, img) => {
           if (status) setProgressThought(status);
           if (img) setInterimImageUrl(img);
-        },
-        referenceOption?.url,
-        room.id
-      );
-      const snapshot = buildPromptSnapshot(
-        'generate',
-        referenceOption ? { notes: `Reference angle: ${referenceOption.label}` } : {}
-      );
-      const { url, version } = await saveGeneratedImage(room.id, imageBase64, 'Initial generation', snapshot);
+        }
+      });
       onUpdate(room.id, {
         generatedImageUrl: url,
         isGeneratingImage: false,
-        currentVersionId: version.id
+        currentVersionId
       });
       await loadVersions();
     } catch (err) {
@@ -286,27 +264,18 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, referenceOptions = [], apiUsa
     setInterimImageUrl(undefined);
 
     try {
-      const editedImageBase64 = await editGeneratedImage(
-        room.generatedImageUrl,
-        editText,
-        (status, img) => {
+      // Edits the room's current version on the server; the snapshot is recorded there
+      const { url, currentVersionId } = await editRoom(room.id, {
+        instructions: editText,
+        onProgress: (status, img) => {
           if (status) setProgressThought(status);
           if (img) setInterimImageUrl(img);
-        },
-        room.id
-      );
-      const editInstruction = editText;
-      const snapshot = buildPromptSnapshot('edit', { editInstruction });
-      const { url, version } = await saveGeneratedImage(
-        room.id,
-        editedImageBase64,
-        `Edit: ${editInstruction.substring(0, 50)}`,
-        snapshot
-      );
+        }
+      });
       onUpdate(room.id, {
         generatedImageUrl: url,
         isEditingImage: false,
-        currentVersionId: version.id
+        currentVersionId
       });
       setEditText('');
       setIsEditingMode(false);

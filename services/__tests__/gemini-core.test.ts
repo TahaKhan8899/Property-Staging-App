@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { MediaModality } from '@google/genai';
 import type { GenerateContentResponse } from '@google/genai';
 import { MODEL_PRICING } from '../../constants';
-import { buildEditPrompt, buildImageParts, collectImageFromStream, computeCallCost, guessMimeType } from '../geminiService';
+import { buildEditPrompt, buildImageParts, collectImageFromStream, computeCallCost, guessMimeType } from '../../shared/gemini-core.js';
 
 const img = (tag: string) => ({ mimeType: 'image/jpeg', data: tag });
 
@@ -70,6 +70,14 @@ describe('collectImageFromStream', () => {
     expect(result.usage?.candidatesTokenCount).toBe(25);
     expect(progress[0]).toEqual(['thinking', undefined]);
     expect(progress[1]).toEqual(['Preview...', 'data:image/png;base64,THOUGHT']);
+  });
+
+  it('attaches the usage seen so far to a mid-stream error', async () => {
+    async function* broken() {
+      yield { usageMetadata: { promptTokenCount: 7 } } as GenerateContentResponse;
+      throw new Error('stream died');
+    }
+    await expect(collectImageFromStream(broken())).rejects.toMatchObject({ message: 'stream died', usage: { promptTokenCount: 7 } });
   });
 
   it('returns null image when the stream has none', async () => {

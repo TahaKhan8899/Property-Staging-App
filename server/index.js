@@ -8,9 +8,21 @@ import crypto from 'crypto';
 import sharp from 'sharp';
 import { ZipArchive } from 'archiver';
 import { fileURLToPath, URL } from 'url';
+import { registerGeminiRoutes } from './geminiRoutes.js';
+import { isGeminiConfigured } from './gemini.js';
+import { computeCallCost } from '../shared/gemini-core.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// GEMINI_API_KEY lives in .env.local (shared with Vite). Tests set STAGING_DB_PATH and must never pick up the real key.
+if (!process.env.STAGING_DB_PATH) {
+    try {
+        process.loadEnvFile(path.resolve(__dirname, '../.env.local'));
+    } catch {
+        // no .env.local: the key may come from the environment
+    }
+}
 
 // Root of all session folders. STAGING_UPLOADS_ROOT lets tests point at a temp folder.
 const UPLOADS_ROOT = process.env.STAGING_UPLOADS_ROOT || path.join(__dirname, 'uploads');
@@ -193,7 +205,7 @@ app.use('/uploads', express.static(UPLOADS_ROOT));
 
 // Test route
 app.get('/api/health', (req, res) => {
-    res.json({ status: 'ok' });
+    res.json({ status: 'ok', geminiKeyConfigured: isGeminiConfigured() });
 });
 
 // --- Sessions ---
@@ -434,23 +446,26 @@ app.get('/api/sessions/:id/export', async (req, res) => {
 
 // --- API Usage / Cost Tracking ---
 
+// One api_calls row; the session is resolved from the room so callers only need roomId
+const insertApiCall = (c) => {
+    const session = c.roomId
+        ? db.prepare('SELECT s.id, s.name FROM rooms r JOIN sessions s ON s.id = r.sessionId WHERE r.id = ?').get(c.roomId)
+        : null;
+    db.prepare(`
+        INSERT INTO api_calls (id, timestamp, sessionId, sessionName, roomId, kind, model, status, error,
+            promptTokens, textOutputTokens, thoughtsTokens, imageOutputTokens, imageCount, costUsd)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+        crypto.randomUUID(), Date.now(), session?.id ?? null, session?.name ?? null, c.roomId ?? null,
+        c.kind, c.model, c.status, c.error ?? null,
+        c.promptTokens ?? 0, c.textOutputTokens ?? 0, c.thoughtsTokens ?? 0, c.imageOutputTokens ?? 0,
+        c.imageCount ?? 0, c.costUsd ?? 0
+    );
+};
+
 app.post('/api/usage', (req, res) => {
     try {
-        const c = req.body || {};
-        // Resolve session from the room so the client only needs to know roomId
-        const session = c.roomId
-            ? db.prepare('SELECT s.id, s.name FROM rooms r JOIN sessions s ON s.id = r.sessionId WHERE r.id = ?').get(c.roomId)
-            : null;
-        db.prepare(`
-            INSERT INTO api_calls (id, timestamp, sessionId, sessionName, roomId, kind, model, status, error,
-                promptTokens, textOutputTokens, thoughtsTokens, imageOutputTokens, imageCount, costUsd)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(
-            crypto.randomUUID(), Date.now(), session?.id ?? null, session?.name ?? null, c.roomId ?? null,
-            c.kind, c.model, c.status, c.error ?? null,
-            c.promptTokens ?? 0, c.textOutputTokens ?? 0, c.thoughtsTokens ?? 0, c.imageOutputTokens ?? 0,
-            c.imageCount ?? 0, c.costUsd ?? 0
-        );
+        insertApiCall(req.body || {});
         res.json({ success: true });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -589,6 +604,77 @@ app.post('/api/rooms', upload.single('file'), (req, res) => {
     }
 });
 
+// Write a generated image buffer into staged/ as the room's next version and make it current.
+// Shared by the client-facing /generated route and the server-side Gemini routes.
+// Throws an Error with .status = 404 when the room does not exist.
+const saveGeneratedBuffer = (id, buffer, description, promptSnapshot) => {
+    // 1. Get Room Info
+    const room = db.prepare('SELECT r.*, s.name as sessionName FROM rooms r JOIN sessions s ON r.sessionId = s.id WHERE r.id = ?').get(id);
+    if (!room) throw Object.assign(new Error('Room not found'), { status: 404 });
+
+    // 2. Check if there's an existing image without a version entry (backward compatibility)
+    const existingVersions = db.prepare('SELECT COUNT(*) as count FROM image_versions WHERE roomId = ?').get(id);
+
+    // If room has a generatedImageUrl but no versions, create version 0 for the existing image
+    const fallbackPrompt = room.generatedPrompt || room.initialPrompt || null;
+
+    if (existingVersions.count === 0 && room.generatedImageUrl) {
+        const version0Id = crypto.randomUUID();
+        const version0Prompt = stringifyPromptSnapshot({
+            basePrompt: fallbackPrompt,
+            source: 'backfill'
+        });
+        db.prepare(`
+            INSERT INTO image_versions (id, roomId, url, timestamp, description, versionNumber, promptSnapshot)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        `).run(version0Id, id, room.generatedImageUrl, Date.now() - 1000, 'Initial generation', 1, version0Prompt);
+    }
+
+    // 3. Determine version number for new image
+    const versionCount = db.prepare('SELECT COUNT(*) as count FROM image_versions WHERE roomId = ?').get(id);
+    const versionNumber = versionCount.count + 1;
+
+    // 4. Generate filename with version
+    const originalFileName = path.basename(room.filePath);
+    const originalBase = path.basename(originalFileName, path.extname(originalFileName));
+    const newFileName = `${originalBase}_v${versionNumber}.jpg`;
+
+    const safeSessionName = sanitizeName(room.sessionName);
+    const { staged } = ensureDirectories(getSessionFolderPath(room.sessionName));
+    const targetPath = path.join(staged, newFileName);
+
+    // 5. Write File
+    fs.writeFileSync(targetPath, buffer);
+
+    // 6. Create version entry
+    const versionId = crypto.randomUUID();
+    const relativePath = path.join(safeSessionName, 'staged', newFileName);
+    const timestamp = Date.now();
+
+    const snapshotPayload = promptSnapshot ?? (fallbackPrompt ? { basePrompt: fallbackPrompt, source: 'generate' } : null);
+    const promptJson = stringifyPromptSnapshot(snapshotPayload);
+
+    db.prepare(`
+        INSERT INTO image_versions (id, roomId, url, timestamp, description, versionNumber, promptSnapshot)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(versionId, id, relativePath, timestamp, description || 'Generated image', versionNumber, promptJson);
+
+    // 7. Update Room
+    db.prepare('UPDATE rooms SET generatedImageUrl = ?, currentVersionId = ? WHERE id = ?')
+        .run(relativePath, versionId, id);
+
+    return {
+        url: `/uploads/${relativePath}`,
+        version: {
+            id: versionId,
+            versionNumber,
+            timestamp,
+            description: description || 'Generated image',
+            promptSnapshot: parsePromptSnapshot(promptJson)
+        }
+    };
+};
+
 // Save Generated Image to Disk with Versioning
 app.post('/api/rooms/:id/generated', (req, res) => {
     try {
@@ -597,75 +683,11 @@ app.post('/api/rooms/:id/generated', (req, res) => {
 
         if (!imageBase64) return res.status(400).json({ error: 'No image data' });
 
-        // 1. Get Room Info
-        const room = db.prepare('SELECT r.*, s.name as sessionName FROM rooms r JOIN sessions s ON r.sessionId = s.id WHERE r.id = ?').get(id);
-        if (!room) return res.status(404).json({ error: 'Room not found' });
-
-        // 2. Check if there's an existing image without a version entry (backward compatibility)
-        const existingVersions = db.prepare('SELECT COUNT(*) as count FROM image_versions WHERE roomId = ?').get(id);
-
-        // If room has a generatedImageUrl but no versions, create version 0 for the existing image
-        const fallbackPrompt = room.generatedPrompt || room.initialPrompt || null;
-
-        if (existingVersions.count === 0 && room.generatedImageUrl) {
-            const version0Id = crypto.randomUUID();
-            const version0Prompt = stringifyPromptSnapshot({
-                basePrompt: fallbackPrompt,
-                source: 'backfill'
-            });
-            db.prepare(`
-                INSERT INTO image_versions (id, roomId, url, timestamp, description, versionNumber, promptSnapshot)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            `).run(version0Id, id, room.generatedImageUrl, Date.now() - 1000, 'Initial generation', 1, version0Prompt);
-        }
-
-        // 3. Determine version number for new image
-        const versionCount = db.prepare('SELECT COUNT(*) as count FROM image_versions WHERE roomId = ?').get(id);
-        const versionNumber = versionCount.count + 1;
-
-        // 4. Generate filename with version
-        const originalFileName = path.basename(room.filePath);
-        const originalBase = path.basename(originalFileName, path.extname(originalFileName));
-        const newFileName = `${originalBase}_v${versionNumber}.jpg`;
-
-        const safeSessionName = sanitizeName(room.sessionName);
-        const { staged } = ensureDirectories(getSessionFolderPath(room.sessionName));
-        const targetPath = path.join(staged, newFileName);
-
-        // 5. Write File
         const base64Data = imageBase64.replace(/^data:image\/\w+;base64,/, "");
-        fs.writeFileSync(targetPath, base64Data, { encoding: 'base64' });
-
-        // 6. Create version entry
-        const versionId = crypto.randomUUID();
-        const relativePath = path.join(safeSessionName, 'staged', newFileName);
-        const timestamp = Date.now();
-
-        const snapshotPayload = promptSnapshot ?? (fallbackPrompt ? { basePrompt: fallbackPrompt, source: 'generate' } : null);
-        const promptJson = stringifyPromptSnapshot(snapshotPayload);
-
-        db.prepare(`
-            INSERT INTO image_versions (id, roomId, url, timestamp, description, versionNumber, promptSnapshot)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        `).run(versionId, id, relativePath, timestamp, description || 'Generated image', versionNumber, promptJson);
-
-        // 7. Update Room
-        db.prepare('UPDATE rooms SET generatedImageUrl = ?, currentVersionId = ? WHERE id = ?')
-            .run(relativePath, versionId, id);
-
-        res.json({
-            success: true,
-            url: `/uploads/${relativePath}`,
-            version: {
-                id: versionId,
-                versionNumber,
-                timestamp,
-                description: description || 'Generated image',
-                promptSnapshot: parsePromptSnapshot(promptJson)
-            }
-        });
-
+        const saved = saveGeneratedBuffer(id, Buffer.from(base64Data, 'base64'), description, promptSnapshot);
+        res.json({ success: true, ...saved });
     } catch (err) {
+        if (err.status === 404) return res.status(404).json({ error: err.message });
         console.error(err);
         res.status(500).json({ error: err.message });
     }
@@ -1028,7 +1050,24 @@ app.delete('/api/rooms/:id', (req, res) => {
     }
 });
 
+registerGeminiRoutes(app, {
+    db,
+    getUploadFilePath,
+    saveGeneratedBuffer,
+    insertApiCall: ({ roomId, kind, model, usage, imageCount, error }) => insertApiCall({
+        roomId,
+        kind,
+        model,
+        status: error ? 'error' : 'ok',
+        error: error ? (error instanceof Error ? error.message : String(error)).slice(0, 500) : undefined,
+        imageCount,
+        ...computeCallCost(model, usage, imageCount)
+    })
+});
+
 export const startServer = (port = 3001) => app.listen(port, () => {
+    // Nothing is running after a restart, so clear "generating" flags left by an interrupted run
+    db.prepare('UPDATE rooms SET isGeneratingPrompt = 0, isGeneratingImage = 0 WHERE isGeneratingPrompt = 1 OR isGeneratingImage = 1').run();
     console.log(`Server running on http://localhost:${port}`);
 });
 
