@@ -54,6 +54,7 @@ Database schema (3 tables): `sessions`, `rooms`, `image_versions` — cascading 
 
 ## Notable Details
 
+- There is no `GET /api/sessions/:id`. Read a session with `GET /api/sessions` (list), `GET /api/sessions/:id/rooms` (rooms with prompts, `currentVersionId`, `referenceRoomId`, output fields), `GET /api/rooms/:id/versions` (versions with parsed `promptSnapshot`) and `GET /api/sessions/:id/usage`.
 - Session renames cascade to both the DB and the `server/uploads/` folder via a dedicated API endpoint.
 - The `services/db.ts` file is a thin fetch-based REST client — not IndexedDB (Dexie is imported but used only as a placeholder for future local caching).
 - Sharp compression runs server-side on download, not on ingest.
