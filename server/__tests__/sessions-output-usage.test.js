@@ -135,4 +135,21 @@ describe('usage', () => {
         expect(res.body.byRoom).toHaveLength(1);
         expect(ctx.db.prepare('SELECT sessionName FROM api_calls WHERE sessionId = ? LIMIT 1').get(s.id).sessionName).toBe(s.name);
     });
+
+    it('counts approved prompts and those edited before approval', async () => {
+        const s = await createSession(ctx.app);
+        const rooms = await Promise.all(['Kitchen', 'Bedroom', 'Bathroom', 'Patio'].map(t => uploadRoom(ctx.app, s.id, t)));
+        const set = (r, generated, initial, approved) =>
+            ctx.db.prepare('UPDATE rooms SET generatedPrompt = ?, initialPrompt = ?, isPromptApproved = ? WHERE id = ?').run(generated, initial, approved, r.id);
+        set(rooms[0], 'same', 'same', 1);        // approved as generated
+        set(rooms[1], 'edited', 'original', 1);  // approved after an edit
+        set(rooms[2], 'edited', 'original', 0);  // edited but not approved: not counted
+        set(rooms[3], 'p', null, 1);             // no initialPrompt (e.g. manual): counts as edited
+        const res = await request(ctx.app).get(`/api/sessions/${s.id}/usage`).expect(200);
+        expect(res.body.promptsApproved).toBe(3);
+        expect(res.body.promptsEdited).toBe(2);
+        const empty = await createSession(ctx.app);
+        const res2 = await request(ctx.app).get(`/api/sessions/${empty.id}/usage`).expect(200);
+        expect(res2.body).toMatchObject({ promptsApproved: 0, promptsEdited: 0 });
+    });
 });

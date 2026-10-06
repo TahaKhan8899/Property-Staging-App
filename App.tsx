@@ -101,6 +101,10 @@ function App() {
     }
   }, [sessions, currentSessionId]);
 
+  // Approval/edit state of the session's prompts; approving or editing a prompt makes no Gemini call,
+  // so the usage readout (which also carries the prompt-edit counts) refreshes on this too
+  const promptSignature = rooms.map(r => `${r.id}:${r.isPromptApproved ? 1 : 0}:${(r.generatedPrompt || '').length}`).join('|');
+
   // Gemini spend for the current session; refreshed whenever a call is logged
   const [usage, setUsage] = useState<SessionUsage | null>(null);
   useEffect(() => {
@@ -119,6 +123,18 @@ function App() {
       window.removeEventListener(USAGE_LOGGED_EVENT, refresh);
     };
   }, [currentSessionId]);
+
+  useEffect(() => {
+    if (!currentSessionId) return;
+    let cancelled = false;
+    // Small delay so the room PATCH that changed the signature has reached the DB
+    const timer = setTimeout(() => {
+      getSessionUsage(currentSessionId)
+        .then(u => { if (!cancelled) setUsage(u); })
+        .catch(() => { /* readout stays as it was */ });
+    }, 500);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [promptSignature, currentSessionId]);
 
   const currentSession = sessions?.find(s => s.id === currentSessionId);
   const currentSessionStatus = resolveSessionStatus(currentSession?.status);
@@ -514,6 +530,11 @@ function App() {
                     title={usage.byKind.map(k => `${k.kind} (${k.model}): ${k.calls} calls, $${k.costUsd.toFixed(2)}`).join('\n') || 'No API calls logged yet'}
                   >
                     API cost ${usage.costUsd.toFixed(2)} · {usage.calls} calls{usage.failedCalls > 0 ? ` (${usage.failedCalls} failed)` : ''}
+                  </span>
+                )}
+                {usage && usage.promptsApproved > 0 && (
+                  <span title="Approved prompts that differ from what the model first wrote (manual edits or AI refine)">
+                    Prompts edited before approval: {usage.promptsEdited} of {usage.promptsApproved}
                   </span>
                 )}
               </p>

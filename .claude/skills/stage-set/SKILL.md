@@ -72,7 +72,7 @@ Without a plan, infer a layout and label it `INFERRED`.
 
 ### 6. Finalize
 - For each room, restore the picked version (`POST /api/rooms/:id/versions/:versionId/restore`) and then `POST /api/rooms/:id/output`. Output copies the current version, so this is the one place a restore is still needed.
-- Report `GET /api/sessions/:id/usage`, versions per room, and calls per room.
+- Report `GET /api/sessions/:id/usage` (spend, calls, and `promptsEdited` of `promptsApproved`), versions per room, and calls per room.
 - List every place where Taha's pick differed from yours, and why if you know. That list is how this skill improves.
 - Tell Taha that ZIPs are available from the session header: "Download Staged ZIP" and "Download Compressed ZIP".
 - Remind him: Canva color pass last, once, on finals only.

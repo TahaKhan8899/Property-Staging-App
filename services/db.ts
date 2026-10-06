@@ -211,6 +211,8 @@ export interface SessionUsage {
   calls: number;
   costUsd: number;
   failedCalls: number;
+  promptsApproved: number; // rooms with an approved prompt
+  promptsEdited: number;   // ...whose approved prompt differs from the model's first prompt
   byKind: { kind: string; model: string; calls: number; costUsd: number }[];
   byRoom: { roomId: string; calls: number; costUsd: number }[];
 }
