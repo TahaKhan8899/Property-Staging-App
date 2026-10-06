@@ -21,6 +21,8 @@ import {
 import { hasStaleOutput } from './services/outputState';
 import type { SessionEntity, SessionUsage } from './services/db';
 
+const LAST_SESSION_KEY = 'staging:lastSessionId';
+
 const SESSION_STATUS_META: Record<SessionStatus, { label: string; dotClass: string; activeClasses: string }> = {
   not_started: {
     label: 'Not started',
@@ -84,11 +86,20 @@ function App() {
     loadSessions();
   }, [loadSessions]);
 
-  // Initialize Session selection
+  // Remember the open session so a refresh lands back on it
+  useEffect(() => {
+    if (!currentSessionId) return;
+    try { localStorage.setItem(LAST_SESSION_KEY, currentSessionId); } catch { /* storage unavailable */ }
+  }, [currentSessionId]);
+
+  // Initialize Session selection: last opened session if it still exists, else the top (newest) one
   useEffect(() => {
     if (sessions && sessions.length > 0) {
       if (!currentSessionId || !sessions.find(s => s.id === currentSessionId)) {
-        setCurrentSessionId(sessions[0].id);
+        let lastId: string | null = null;
+        try { lastId = localStorage.getItem(LAST_SESSION_KEY); } catch { /* storage unavailable */ }
+        const last = !currentSessionId && lastId ? sessions.find(s => s.id === lastId) : undefined;
+        setCurrentSessionId((last ?? sessions[0]).id);
       }
     } else if (sessions && sessions.length === 0) {
       // Auto-create only if we have confirmed 0 sessions

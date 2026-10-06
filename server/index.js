@@ -225,8 +225,9 @@ app.post('/api/sessions', (req, res) => {
         const { id, name, lastModified, status } = req.body;
         const safeLastModified = lastModified ?? Date.now();
         const safeStatus = normalizeSessionStatus(status);
-        const highestSortOrder = db.prepare('SELECT COALESCE(MAX(sortOrder), -1) as maxOrder FROM sessions').get();
-        const nextSortOrder = (highestSortOrder?.maxOrder ?? -1) + 1;
+        // Newest session goes to the top of the sidebar
+        const lowestSortOrder = db.prepare('SELECT COALESCE(MIN(sortOrder), 1) as minOrder FROM sessions').get();
+        const nextSortOrder = (lowestSortOrder?.minOrder ?? 1) - 1;
         db.prepare('INSERT INTO sessions (id, name, lastModified, status, sortOrder) VALUES (?, ?, ?, ?, ?)')
             .run(id, name, safeLastModified, safeStatus, nextSortOrder);
 

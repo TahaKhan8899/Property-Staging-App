@@ -129,6 +129,15 @@ const assignMissingSortOrders = () => {
 
 assignMissingSortOrders();
 
+// v1: sessions used to be appended at the bottom (oldest first). Flip the existing order once so the
+// newest sit on top; new sessions are now inserted at the top (see POST /api/sessions).
+if (db.pragma('user_version', { simple: true }) < 1) {
+  db.transaction(() => {
+    db.prepare('UPDATE sessions SET sortOrder = (SELECT MAX(sortOrder) FROM sessions) - sortOrder').run();
+    db.pragma('user_version = 1');
+  })();
+}
+
 try {
   db.prepare("ALTER TABLE rooms ADD COLUMN roomStatus TEXT DEFAULT 'in_progress'").run();
 } catch (e) {

@@ -85,6 +85,16 @@ describe('download compressed', () => {
     });
 });
 
+describe('session order', () => {
+    it('lists the newest session first', async () => {
+        const a = await createSession(ctx.app, 'Order A');
+        const b = await createSession(ctx.app, 'Order B');
+        const list = (await request(ctx.app).get('/api/sessions').expect(200)).body.map(x => x.id);
+        expect(list[0]).toBe(b.id);
+        expect(list.indexOf(b.id)).toBeLessThan(list.indexOf(a.id));
+    });
+});
+
 describe('session rename and delete', () => {
     it('moves the folder and rewrites room and version paths', async () => {
         const s = await createSession(ctx.app, 'Old Name');
