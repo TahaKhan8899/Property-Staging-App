@@ -422,3 +422,8 @@ Targets after Batch 1: versions per room at or under 4, edits per set at or unde
 
 - Commit `8e5d4c4` sets living rooms to "L-sectional, skip accent chairs by default" and kitchens to "Always style the counters with an espresso machine". Both were previously rejected as overfit or bare-always rules (constraint 5). Keep or soften is Taha's call; the implementer must not change them.
 - `DESIGNER_SYSTEM_PROMPT` still says "sets of 4–5 images per unit". Reality is about 6, capped at 7. Safe one-line fix; include it with item 1.1.
+
+### 1.4b Text-only render mode for linked dependents (added 2026-10-06 after 504-201)
+**Status: done** (`a839548`). `POST /render` and `/prompt` take `referenceMode: "reference" | "text"`; `/render` also takes an array, one mode per candidate. Text mode renders a linked dependent from its own photo without the anchor image. Why: in 504-201 all 8 reference-mode kitchen renders tightened the lens; text-only held it in 3 of 6. The stage-set skill now defaults dependents to text mode.
+
+**Status note (2026-10-06, after 504-201):** also shipped a same-room edit reference (extends 1.2, `0a043b6`), candidate-order version numbers (`b571244`), designer prompt rules (`aadf273`) and the stage-set skill update (`38eda4e`). 1.3, 2.1 and 3.2 stay deferred; see `504-201-Analysis.md`.
