@@ -11,7 +11,7 @@
 - Work through the items **in order, one item per commit**, on a feature branch. Each item has its own acceptance criteria and a manual test. Stop after each item so Taha can review before the next.
 - Read `CLAUDE.md` first. It describes the stack, ports, folders and data flow.
 - Before coding an item, open the files it names and confirm the line anchors. They were correct at `8e5d4c4` and will drift as items land.
-- There is no test framework. The gate for every commit is: `npx tsc --noEmit -p tsconfig.json` passes (it passes today), `npm run dev` starts, and the item's manual test passes.
+- Item 0 adds a test suite. Until it lands, the gate for every commit is: `npx tsc --noEmit -p tsconfig.json` passes (it passes today), `npm run dev` starts, and the item's manual test passes. After item 0, `npm test` is added to that gate, and every later item that touches a server route or a prompt builder must add or extend a test.
 - Do **not** bundle unrelated refactors into an item. Do **not** build anything in section 7 (rejected ideas).
 
 ---
@@ -68,6 +68,51 @@
 
 ## 3. Batch 1: build before set 504-102
 
+### 0. Regression test suite (build first)
+
+**Goal.** Give every later agent a `npm test` that catches the class of bug that has already bitten this repo twice: commits `9bb1c53` (duplicate room names broke Download Compressed) and `51718e3` (wrong next room number). Nothing in the UI and nothing that calls Gemini. Target run time under 10 seconds.
+
+**Scope.**
+- **Vitest**, since the project is on Vite. Add `"test": "vitest run"` and `"test:watch": "vitest"` to `package.json`. Add `npm test` to the commit gate in `CLAUDE.md`.
+- **Server integration tests** (`server/__tests__/`), run with `supertest` against the Express app, a temp SQLite file and a temp uploads folder per test file. Cover, in this order of value:
+  1. Upload naming: `POST /api/rooms` picks the next unused number per room type, including after a delete and after a room-type change.
+  2. Room-type rename (`PATCH /api/rooms/:id` with `roomType`) renames the original and staged files and updates `filePath` and `generatedImageUrl`.
+  3. Versioning: `POST /api/rooms/:id/generated` writes `<base>_vN.jpg`, inserts the `image_versions` row with the prompt snapshot, updates `currentVersionId`; the backfill path for a room with an image but no versions creates version 1 first.
+  4. `POST /api/rooms/:id/upload-staged` behaves like a generated save with description "Uploaded external image".
+  5. Restore: `POST /api/rooms/:id/versions/:versionId/restore` sets the room's current URL and id; unknown version returns 404.
+  6. Output folder: add, re-add after a version change (old file removed, new copied), remove, and two rooms with the same base name get ` (2)`.
+  7. Compressed download: two rooms named `Kitchen 3` get `Kitchen 3_compressed.jpg` and `Kitchen 3 (2)_compressed.jpg`; the output is a smaller JPEG; a restored older version is recompressed, not served from cache.
+  8. Session rename (`PATCH /api/sessions/:id` with `name`) moves the folder and rewrites every `rooms.filePath`, `rooms.generatedImageUrl` and `image_versions.url`.
+  9. Session delete cascades rooms, versions and the folder; `api_calls` rows survive.
+  10. Usage: `POST /api/usage` resolves session from room; `GET /api/sessions/:id/usage` totals and groups correctly.
+  Use tiny real JPEGs generated with Sharp in a `beforeAll`, not fixtures checked into git.
+- **Prompt-shape unit tests** (`services/__tests__/`). These need the builders extracted into pure functions first (see refactor below). Assert:
+  1. `buildEditPrompt(instructions)` contains the user text, the "Keep everything else IDENTICAL" block, and the closing "Do not add any new objects" sentence.
+  2. With `rawPrompt: true` the text is passed through untouched (needed by item 1.3).
+  3. Parts ordering: with a reference, parts are `[reference image, target image, text]`; without, `[target image, text]` (needed by items 1.2 and 1.4).
+  4. `guessMimeType` handles `.png`, `.jpg`, query strings and `File` objects.
+  5. Stream parsing: given fake chunks with a thought image, a final image and a `usageMetadata` chunk, the parser returns the final image, reports the thought image through `onProgress`, and captures usage.
+  6. `recordApiCall` cost math: given a usage object with image and text modalities, the computed `costUsd` matches `MODEL_PRICING`.
+- **System prompt guard tests** (`constants.test.ts`). `DESIGNER_SYSTEM_PROMPT` contains the "CAMERA ANGLE AND PERSPECTIVE LOCK" section and the three all-caps lock phrases. Every line in the room guidelines that contains "always" or "Always" also contains a qualifier such as "where it makes", "if", "unless" or "when" (constraint 5). `REFERENCE_ANGLE_SYSTEM_PROMPT` is byte-identical to a stored snapshot, so any change to it is a deliberate, reviewed act (constraint 4).
+
+**Refactor required, kept minimal.**
+- `server/db.js` (L9): read the database path from `process.env.STAGING_DB_PATH`, defaulting to the current `../database.sqlite`.
+- `server/index.js`: replace the six `path.join(__dirname, 'uploads')` uses (L78, L115, L174, L186, L885 and any others) with one `UPLOADS_ROOT` constant read from `process.env.STAGING_UPLOADS_ROOT`, defaulting to the current folder. Move `app.listen` (L981) into a new `server/start.js` and `export default app` from `server/index.js`. Update the `server` script in `package.json` to run `server/start.js`. Behavior with no env vars set must be unchanged.
+- `services/geminiService.ts`: extract `buildEditPrompt`, `buildImageParts`, and a `collectImageFromStream(stream, onProgress)` helper, and export them. The exported Gemini functions keep their signatures and call these. `fileToGenerativePart` stays as is; tests pass data URLs or `File` objects.
+- Vitest config: `environment: 'node'` for server and service tests. `fileToGenerativePart` uses `FileReader`, so tests that need it should run in the `jsdom` environment via a per-file `// @vitest-environment jsdom` comment, or pass pre-encoded base64 and avoid it.
+
+**Not in scope.** React component tests, Playwright, any test that hits the Gemini API, coverage thresholds.
+
+**Acceptance.**
+- `npm test` passes in under 10 seconds on a clean checkout with no `.env.local`.
+- `npm run dev` and `npm run server` behave exactly as before, same DB file, same uploads folder, same port.
+- Deleting the database and uploads from a test run leaves the real `database.sqlite` and `server/uploads` untouched (tests only ever use temp paths).
+- `CLAUDE.md` lists `npm test` under Commands and in a new "Before committing" line alongside `tsc`.
+
+**Manual test.** Run `npm test` twice in a row; both green. Start the app, upload one room, confirm the file lands in `server/uploads/<Session>/original/` as before.
+
+---
+
 ### 1.1 Zip export (staged and compressed)
 
 **Goal.** One click downloads the finished set as two zips, replacing the manual download-and-zip done twice per delivery. Saves about 10 min per set.
@@ -81,6 +126,8 @@
   - Use the `archiver` package (add to `dependencies`). Stream to the response; do not write zips to disk.
 - Client: add `getSessionExportUrl(sessionId, variant)` to `services/db.ts`. In the `App.tsx` session header, add two buttons, "Download Staged ZIP" and "Download Compressed ZIP", with a count "N images in output". Disable when the count is 0. Open via `window.open` like the existing compressed download.
 - Show a small warning in that header when any room has a stale output (`room.outputSourcePath` set but not equal to the current version; the card already computes `hasStaleOutput`). Lift that helper or recompute in `App.tsx`.
+
+**Tests to add (item 0 suite).** Export route: both variants list exactly the output files, compressed entries are smaller, 404 on empty output, zip file name uses the sanitized session name.
 
 **Acceptance.**
 - Both zips contain exactly the files in `output/`, same names, nothing else.
@@ -103,6 +150,8 @@
 - UI in the `RoomCard` edit panel (the `isEditingMode` block): a "Reference for this edit" row with a dropdown of staged sibling rooms (reuse the `referenceOptions` prop, pre-selected to `room.referenceRoomId` when set) and an "Upload photo" option that opens a file input. Show a thumbnail of the chosen reference. The uploaded file lives in component state only and is cleared after the edit; it is **not** persisted in Batch 1.
 - Snapshot: `buildPromptSnapshot('edit', { editInstruction, notes: 'Edit reference: <sibling label or file name>' })`.
 - Log kind stays `edit`.
+
+**Tests to add.** `buildImageParts` with and without a reference; `buildEditPrompt` with a reference prepends the "Image 1 is a reference image" sentence and without it is unchanged from the stored expectation.
 
 **Acceptance.**
 - Edit with no reference: identical request shape and behavior to today.
@@ -128,6 +177,8 @@
 - `editGeneratedImage` must **not** wrap a composed prompt in the generic template again. Add an options argument, for example `{ rawPrompt: true }`, that sends the text as-is. The snapshot for a composed edit stores `editInstruction` = the user's intents, `rawPrompt` = the composed prompt, `source: 'edit-composed'`.
 - UI in the edit panel: two tabs, "Compose" (default) and "Quick". Compose: textarea for intents, one per line; button "Write prompt"; the composed prompt appears in an editable textarea with "Apply" and "Rewrite". Quick is today's behavior. The reference picker from item 1.2 applies to both tabs. If a reference is attached, pass that fact into the composer so the Changes list can say "match the sectional in the reference image".
 
+**Tests to add.** `rawPrompt: true` bypasses the template; the composer request's parts are `[original, current render, text]`; `EDIT_COMPOSER_SYSTEM_PROMPT` contains the two labels "Keep exactly as they are:" and "Changes:" and the closing sentence.
+
 **Acceptance.**
 - Composed prompt has the four parts in order; number of Changes equals number of non-empty intent lines.
 - Keep list names only items visible in the images (spot-check 3 renders).
@@ -149,6 +200,8 @@
 - Progress: reuse `progressThought`; show "Generating 3 candidates, 1 finished" style text. Interim images from the first stream are fine to display.
 - Use parallel requests, not `candidateCount`.
 - Not for edits in Batch 1.
+
+**Tests to add.** Saving three candidates in quick succession yields version numbers 1, 2, 3 with no collisions in file names (server test, three parallel `POST /generated` calls).
 
 **Acceptance.**
 - With N=3, three `image_versions` rows and three `generate` rows in `api_calls` appear for the room.
