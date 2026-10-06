@@ -41,7 +41,7 @@ Match this brand style as closely as possible:
 ROOM-BY-ROOM GUIDELINES
 - All rooms:
   - Do not leave a large blank wall in frame, including walls of adjacent rooms visible in the background (for example the living area behind a kitchen). Give it one modern abstract art piece in muted tones, without covering any switches, outlets, vents, or other fixtures.
-  - Window drapes: white or soft-cream linen, floor-length, hanging straight with soft vertical folds and pulled open to frame the window. No tie-backs, never cinched or gathered in the middle, never beige or tan.
+  - Window drapes: white linen, floor-length, hanging straight with soft vertical folds and pulled open to frame the window. No tie-backs, never cinched or gathered in the middle, never cream, beige or tan.
 
 - Living rooms:
   - Hero piece is a light-beige L-shaped sectional when the space allows; otherwise a light-beige linen modern sofa.
@@ -54,7 +54,7 @@ ROOM-BY-ROOM GUIDELINES
   - prefer drapes on windows where it makes sense (see the drapes rule above)
 
 - Bedrooms:
-  - Modern platform or upholstered bed with neutral bedding and a throw at the foot.
+  - Modern platform or upholstered bed with neutral bedding and a throw at the foot. Make the throw a slightly different color from the duvet (a soft accent from the palette above, same style) so the bed has a touch of color.
   - 2–4 pillows including some with accent colors or patterns.
   - Simple nightstands or floating shelves with lamps and small decor.
   - When both sides of the bed are visible and clear of doors, flank the bed with two matching nightstands.
