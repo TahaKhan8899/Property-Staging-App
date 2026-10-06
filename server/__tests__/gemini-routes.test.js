@@ -150,6 +150,28 @@ describe('POST /api/rooms/:id/render', () => {
         expect(getRoom(ctx.db, r.id).currentVersionId).toBe(lowest.id);
     });
 
+    it('numbers versions in candidate order even when a later candidate finishes first', async () => {
+        const { r } = await approvedRoom();
+        let n = 0;
+        setGeminiClientForTests({
+            models: {
+                generateContentStream: async (req) => {
+                    calls.push({ type: 'image', req });
+                    const delay = ++n === 1 ? 60 : 0; // candidate 1 finishes last
+                    return (async function* () {
+                        await new Promise(resolve => setTimeout(resolve, delay));
+                        yield { candidates: [{ content: { parts: [{ inlineData: { mimeType: 'image/png', data: png } }] } }], usageMetadata: USAGE };
+                    })();
+                }
+            }
+        });
+        const res = await request(ctx.app).post(`/api/rooms/${r.id}/render`).send({ candidates: 3 }).expect(200);
+        expect(res.body.versions.map(v => [v.versionNumber, v.description])).toEqual([
+            [1, 'Candidate 1 of 3'], [2, 'Candidate 2 of 3'], [3, 'Candidate 3 of 3']
+        ]);
+        expect(res.body.currentVersionId).toBe(res.body.versions[0].id);
+    });
+
     it('streams candidate_done per candidate and reports partial failures', async () => {
         const { r } = await approvedRoom();
         let n = 0;

@@ -219,45 +219,57 @@ export const registerGeminiRoutes = (app, { db, getUploadFilePath, saveGenerated
             const image = readImage(room.filePath);
             const linkedReference = modes.includes('reference') ? resolveReference(room, req.body?.referenceVersionId) : null;
 
-            const outcomes = await Promise.allSettled(Array.from({ length: n }, async (_, i) => {
+            // Renders run in parallel; saving waits for all of them so version numbers follow candidate order
+            const outcomes = await Promise.allSettled(modes.map(async (mode, i) => {
                 const k = i + 1;
-                const reference = modes[i] === 'reference' ? linkedReference : null;
                 try {
-                    const buffer = await gemini.renderImage({
+                    return await gemini.renderImage({
                         roomId: room.id,
                         image,
-                        reference: reference?.image,
+                        reference: mode === 'reference' ? linkedReference?.image : undefined,
                         prompt,
                         onProgress: progressSender(send, k)
                     });
-                    const notes = [
-                        manualPrompt ? 'Prompt: manual' : null,
-                        reference ? `Reference angle: ${reference.label}` : null,
-                        modes[i] === 'text' && room.referenceRoomId ? 'Text mode: reference not sent' : null,
-                        n > 1 ? `Candidate ${k} of ${n}` : null
-                    ].filter(Boolean).join('; ');
-                    const saved = saveGeneratedBuffer(
-                        room.id,
-                        buffer,
-                        n > 1 ? `Candidate ${k} of ${n}` : 'Initial generation',
-                        { basePrompt: prompt, capturedAt: Date.now(), source: 'generate', ...(notes ? { notes } : {}) }
-                    );
-                    send('candidate_done', { candidate: k, of: n, version: { ...saved.version, url: saved.url } });
-                    return saved;
                 } catch (err) {
                     send('candidate_error', { candidate: k, of: n, error: err?.message || String(err) });
                     throw err;
                 }
             }));
 
-            const saved = outcomes.filter(o => o.status === 'fulfilled').map(o => o.value);
-            const errors = outcomes.filter(o => o.status === 'rejected').map(o => o.reason?.message || String(o.reason));
+            const saved = [];
+            const errors = [];
+            outcomes.forEach((outcome, i) => {
+                const k = i + 1;
+                if (outcome.status === 'rejected') {
+                    errors.push(outcome.reason?.message || String(outcome.reason));
+                    return;
+                }
+                const reference = modes[i] === 'reference' ? linkedReference : null;
+                const notes = [
+                    manualPrompt ? 'Prompt: manual' : null,
+                    reference ? `Reference angle: ${reference.label}` : null,
+                    modes[i] === 'text' && room.referenceRoomId ? 'Text mode: reference not sent' : null,
+                    n > 1 ? `Candidate ${k} of ${n}` : null
+                ].filter(Boolean).join('; ');
+                try {
+                    const entry = saveGeneratedBuffer(
+                        room.id,
+                        outcome.value,
+                        n > 1 ? `Candidate ${k} of ${n}` : 'Initial generation',
+                        { basePrompt: prompt, capturedAt: Date.now(), source: 'generate', ...(notes ? { notes } : {}) }
+                    );
+                    send('candidate_done', { candidate: k, of: n, version: { ...entry.version, url: entry.url } });
+                    saved.push(entry);
+                } catch (err) {
+                    send('candidate_error', { candidate: k, of: n, error: err?.message || String(err) });
+                    errors.push(err?.message || String(err));
+                }
+            });
             if (saved.length === 0) throw new Error(`Failed to generate staged image: ${errors[0]}`);
 
-            // Candidates finish in any order; leave the lowest new version current so the result is predictable
+            // Leave the lowest new version (the first successful candidate) current so the result is predictable
             if (saved.length > 1) {
-                const first = saved.reduce((a, b) => (a.version.versionNumber <= b.version.versionNumber ? a : b));
-                const row = loadVersion(first.version.id, room.id);
+                const row = loadVersion(saved[0].version.id, room.id);
                 db.prepare('UPDATE rooms SET generatedImageUrl = ?, currentVersionId = ? WHERE id = ?').run(row.url, row.id, room.id);
             }
 
