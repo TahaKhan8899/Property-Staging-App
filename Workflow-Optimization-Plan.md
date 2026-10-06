@@ -1,6 +1,6 @@
 # WH Staging Assistant: Workflow Optimization Implementation Plan
 
-**Status:** approved by Taha on 2026-10-06. Ready to implement.
+**Status:** approved by Taha on 2026-10-06. Items 0, 1.1 and 1.1b are done. See the priority update in section 0.
 **Repo state this plan was written against:** `main` at `8e5d4c4` (after the usage-logging and prompt-rule commits of Oct 5).
 **Audience:** the AI coding agent implementing this, plus Taha as reviewer.
 
@@ -13,6 +13,22 @@
 - Before coding an item, open the files it names and confirm the line anchors. They were correct at `8e5d4c4` and will drift as items land.
 - Item 0 adds a test suite. Until it lands, the gate for every commit is: `npx tsc --noEmit -p tsconfig.json` passes (it passes today), `npm run dev` starts, and the item's manual test passes. After item 0, `npm test` is added to that gate, and every later item that touches a server route or a prompt builder must add or extend a test.
 - Do **not** bundle unrelated refactors into an item. Do **not** build anything in section 7 (rejected ideas).
+
+### Priority update (2026-10-06, after staging 504-102 with an AI agent over the API)
+
+An agent session drove the whole 504-102 first pass and revision loop through the 1.1b routes: setup, floor-plan mapping, prompts, renders, edits and output. Result: $5.23 of Gemini spend, 34 versions over 5 rooms. The two kitchen angles took 24 of those 34. The agent is now the primary driver; the UI is where Taha reviews and picks. The project skill `.claude/skills/stage-set/` encodes the workflow and must be updated in the same commit as any route it calls.
+
+New build order:
+1. **1.1c** version-targeted calls.
+2. **1.2** reference image on edits, on top of 1.1c's `referenceVersionId`.
+3. **1.4** candidates: the server side shipped in 1.1b; what remains is the UI selector and candidate strip for Taha's review stops.
+4. **1.5** prompt-edit measurement.
+
+Deferred until set 504-201 has been run with the skill and measured:
+- **1.3 edit composer.** The agent already writes precise numbered edit prompts from the images.
+- **2.1 angle detection.** The agent grouped same-room photos and chose anchors itself. The floor-plan upload part of 2.1 may still be worth building, so the server-side prompt writer can see the plan.
+- **3.2 architecture QA.** The agent flags drift from the renders; revisit if it misses too much.
+- **3.1, 3.3, 3.4, 2.2** unchanged: still gated on data.
 
 ---
 
@@ -166,6 +182,54 @@
 **Manual test.** Stage one room end to end in the UI. Then do the same room with `curl` only.
 
 **Order.** Items 1.2, 1.3, 1.4, 2.1 detection, 2.2 and 3.2 are implemented on these routes, not in `geminiService.ts`.
+
+---
+
+### 1.1c Version-targeted renders, edits and prompts (added 2026-10-06 by Taha)
+
+**Goal.** Let a caller say which version to act on, instead of always acting on whatever is current. Today, after 1.1b:
+- `/render` and `/prompt` read the reference room's *current* image.
+- `/edit` edits the room's *current* image.
+- A hand-written prompt can reach `/render` only through `PATCH /api/rooms/:id` with `generatedPrompt` and `isPromptApproved`.
+
+Staging 504-102 over the API ran into three problems:
+- Every targeted step needed restore → act → restore.
+- Clicking a version in the UI silently changed what the next agent call used.
+- The PATCH overwrote `initialPrompt`, which corrupts the item 1.5 measurement for those rooms.
+
+The UI has the same flaw: a dependent angle copies whatever its anchor card happens to display, not a version Taha chose.
+
+**Design.**
+- `POST /api/rooms/:id/render` gains two optional fields:
+  - `prompt`: render from this text instead of `room.generatedPrompt`. It skips the approval check, because an explicit prompt is the approval. It writes neither `generatedPrompt` nor `initialPrompt`. The snapshot stores the text as `basePrompt`, and `notes` includes `Prompt: manual`.
+  - `referenceVersionId`: the version of the reference room to use. It must belong to `room.referenceRoomId`, otherwise return 400. When omitted, behavior is as today.
+- `POST /api/rooms/:id/prompt` gains `referenceVersionId` with the same meaning: the reference-angle prompt writer reads that version.
+- `POST /api/rooms/:id/edit` gains `baseVersionId`: edit that version's image instead of the current one. It must belong to the room, otherwise return 400. Snapshot `notes` gets `Edited from vN`.
+- New `PUT /api/rooms/:id/prompt` `{ prompt, approve? }` sets `generatedPrompt`, and sets `isPromptApproved` when `approve` is true. It **never** touches `initialPrompt`. Use it when a manual prompt should become the room's saved prompt. The UI prompt editor keeps using `PATCH`, which already leaves `initialPrompt` alone.
+- Snapshots record the exact reference version, `notes: 'Reference angle: Kitchen 1 v6'`, not just the room label as today.
+- Targeting never moves the room's current pointer. The current version changes only when a new version is saved, as today.
+- Item 1.2 (reference image on edits) takes the reference explicitly, because matching decor across angles means editing one angle with the *other* angle's version as reference, in either direction: `referenceRoomId` (any room in the same session; defaults to `room.referenceRoomId`) plus optional `referenceVersionId`, which must belong to that reference room. A room from another session, or a version that does not belong to the named reference room, returns 400. A room may not reference itself.
+- UI (may land as a follow-up commit): the reference dropdown in `RoomCard` lists the anchor's versions, defaulting to current, and passes `referenceVersionId`.
+
+**Tests to add.** Using the fake Gemini client:
+- `render` with `prompt` sends that text, works on an unapproved room, and leaves both prompt columns unchanged.
+- `render` with `referenceVersionId` sends that version's image even when the anchor's current version is different. A version from another room returns 400.
+- `edit` with `baseVersionId` sends that version's image without a restore.
+- `PUT /prompt` leaves `initialPrompt` unchanged.
+- Snapshot notes include the reference version number.
+- Calls without the new fields produce byte-identical requests to today.
+
+**Acceptance.**
+- The 504-102 kitchen flow runs with no `restore` and no prompt `PATCH` calls:
+  - a fresh Kitchen 1 render from a manual prompt;
+  - a Kitchen 2 render referencing Kitchen 1 v6 while Kitchen 1's current version is v9;
+  - an edit of Kitchen 1 v6 while v9 is current.
+- No call changes a room's current version except by saving a new version.
+- Requests without the new fields behave exactly as before.
+
+**Manual test.** In the UI, set Kitchen 1 to some version other than v6. With `curl`, render Kitchen 2 with `referenceVersionId` set to Kitchen 1 v6. Confirm that the new version's View Prompt note says `Kitchen 1 v6`, that its furniture matches v6, and that Kitchen 1's displayed version did not change.
+
+**Order.** Before 1.2, since 1.2 reuses `referenceVersionId`.
 
 ---
 
