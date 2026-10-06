@@ -72,7 +72,8 @@ const schema = `
     thoughtsTokens INTEGER,
     imageOutputTokens INTEGER,
     imageCount INTEGER,
-    costUsd REAL
+    costUsd REAL,
+    durationMs INTEGER    -- wall time of the attempt (image calls), for latency comparisons
   );
   CREATE INDEX IF NOT EXISTS idx_api_calls_session ON api_calls(sessionId);
 `;
@@ -88,6 +89,12 @@ try {
 
 try {
   db.prepare('ALTER TABLE rooms ADD COLUMN currentVersionId TEXT').run();
+} catch (e) {
+  // Column likely exists
+}
+
+try {
+  db.prepare('ALTER TABLE api_calls ADD COLUMN durationMs INTEGER').run();
 } catch (e) {
   // Column likely exists
 }

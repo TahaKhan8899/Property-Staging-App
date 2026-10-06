@@ -17,6 +17,7 @@ export interface PromptSnapshot {
   capturedAt?: number;
   notes?: string;
   rawPrompt?: string | null;
+  model?: string; // set when a non-default model made the version (fast edits)
 }
 
 export interface ImageVersion {

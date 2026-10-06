@@ -130,6 +130,7 @@ export const editRoom = async (
     referenceVersionId?: string;
     referenceImage?: string; // data URL
     referenceLabel?: string;
+    fast?: boolean; // Flash image model: faster and cheaper, quality unproven (plan item 3.3)
     onProgress?: ProgressHandler;
   }
 ) => {

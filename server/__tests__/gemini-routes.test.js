@@ -281,6 +281,26 @@ describe('POST /api/rooms/:id/edit', () => {
         expect(res.body.version.promptSnapshot).toMatchObject({ source: 'edit-composed', editInstruction: 'remove table', rawPrompt: raw });
     });
 
+    it('fast: true edits with the Flash model and records it in the snapshot, call log and latency', async () => {
+        const { s, r } = await staged();
+        const res = await request(ctx.app).post(`/api/rooms/${r.id}/edit`).send({ instructions: 'add a lamp', fast: true }).expect(200);
+        expect(calls[0].req.model).toBe('gemini-3.1-flash-image');
+        expect(res.body.version.promptSnapshot).toMatchObject({ source: 'edit', model: 'gemini-3.1-flash-image', notes: 'Fast edit (Flash)' });
+        const [row] = apiRows(r.id);
+        expect(row).toMatchObject({ kind: 'edit', model: 'gemini-3.1-flash-image', status: 'ok' });
+        expect(row.durationMs).toBeGreaterThanOrEqual(0);
+        expect(row.costUsd).toBeGreaterThan(0);
+        const usage = (await request(ctx.app).get(`/api/sessions/${s.id}/usage`).expect(200)).body;
+        expect(usage.byKind.find(k => k.model === 'gemini-3.1-flash-image').avgDurationMs).toBeGreaterThanOrEqual(0);
+    });
+
+    it('edits use the standard image model unless fast is exactly true', async () => {
+        const { r } = await staged();
+        const res = await request(ctx.app).post(`/api/rooms/${r.id}/edit`).send({ instructions: 'add a lamp', fast: 'yes' }).expect(200);
+        expect(calls[0].req.model).toBe('gemini-3-pro-image');
+        expect(res.body.version.promptSnapshot.model).toBeUndefined();
+    });
+
     it('validates input and requires a staged image', async () => {
         const { r } = await staged();
         await request(ctx.app).post(`/api/rooms/${r.id}/edit`).send({}).expect(400);

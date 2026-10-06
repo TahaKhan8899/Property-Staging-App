@@ -4,6 +4,7 @@ import sharp from 'sharp';
 import {
     MODEL_TEXT_ANALYSIS,
     MODEL_IMAGE_GENERATION,
+    MODEL_IMAGE_EDIT_FAST,
     DESIGNER_SYSTEM_PROMPT,
     REFERENCE_ANGLE_SYSTEM_PROMPT,
     IMAGE_RESOLUTION,
@@ -47,7 +48,7 @@ const toJpegBuffer = (dataUrl) =>
         .jpeg({ quality: 90 })
         .toBuffer();
 
-// logCall(roomId, kind, model, usage, imageCount, error?) writes one api_calls row. It must never throw.
+// logCall(roomId, kind, model, usage, imageCount, error?, durationMs?) writes one api_calls row. It must never throw.
 export const createGemini = ({ logCall }) => {
     const textCall = async (kind, roomId, request, failureLabel) => {
         try {
@@ -63,13 +64,14 @@ export const createGemini = ({ logCall }) => {
     };
 
     // One streamed image call (render or edit) with 503 retry. Returns a JPEG buffer.
-    const imageCall = (kind, roomId, parts, onProgress, interimStatus) =>
+    const imageCall = (kind, roomId, parts, onProgress, interimStatus, model = MODEL_IMAGE_GENERATION) =>
         retryWithBackoff(async () => {
             const ai = getClient();
+            const startedAt = Date.now();
             let usage;
             try {
                 const stream = await ai.models.generateContentStream({
-                    model: MODEL_IMAGE_GENERATION,
+                    model,
                     contents: { parts },
                     config: { imageConfig: { imageSize: IMAGE_RESOLUTION, aspectRatio: IMAGE_ASPECT_RATIO } }
                 });
@@ -77,10 +79,10 @@ export const createGemini = ({ logCall }) => {
                 usage = result.usage;
                 if (!result.image) throw new Error('No image data returned from model.');
                 const jpeg = await toJpegBuffer(result.image);
-                logCall(roomId, kind, MODEL_IMAGE_GENERATION, usage, 1);
+                logCall(roomId, kind, model, usage, 1, undefined, Date.now() - startedAt);
                 return jpeg;
             } catch (error) {
-                logCall(roomId, kind, MODEL_IMAGE_GENERATION, usage ?? error?.usage, 0, error);
+                logCall(roomId, kind, model, usage ?? error?.usage, 0, error, Date.now() - startedAt);
                 console.error(`Error in ${kind}:`, error);
                 throw error;
             }
@@ -116,14 +118,16 @@ export const createGemini = ({ logCall }) => {
         renderImage: ({ roomId, image, reference, prompt, onProgress }) =>
             imageCall('generate', roomId, buildImageParts(image, prompt, reference), onProgress, 'Generating preview...'),
 
-        // reference (optional) is sent as Image 1, the image to edit as Image 2
-        editImage: ({ roomId, image, reference, instructions, rawPrompt, onProgress }) =>
+        // reference (optional) is sent as Image 1, the image to edit as Image 2.
+        // fast uses the cheaper, faster Flash image model (plan item 3.3).
+        editImage: ({ roomId, image, reference, instructions, rawPrompt, fast, onProgress }) =>
             imageCall(
                 'edit',
                 roomId,
                 buildImageParts(image, buildEditPrompt(instructions, { rawPrompt, withReference: Boolean(reference) }), reference),
                 onProgress,
-                'Editing image...'
+                'Editing image...',
+                fast ? MODEL_IMAGE_EDIT_FAST : MODEL_IMAGE_GENERATION
             )
     };
 };

@@ -5,6 +5,7 @@ import fs from 'fs';
 import path from 'path';
 import { createGemini, isGeminiConfigured } from './gemini.js';
 import { guessMimeType } from '../shared/gemini-core.js';
+import { MODEL_IMAGE_EDIT_FAST } from '../shared/constants.js';
 
 const MAX_CANDIDATES = 3;
 const REFERENCE_MODES = ['reference', 'text'];
@@ -28,9 +29,9 @@ const parseReferenceModes = (body) => {
 
 export const registerGeminiRoutes = (app, { db, getUploadFilePath, saveGeneratedBuffer, insertApiCall }) => {
     const gemini = createGemini({
-        logCall: (roomId, kind, model, usage, imageCount, error) => {
+        logCall: (roomId, kind, model, usage, imageCount, error, durationMs) => {
             try {
-                insertApiCall({ roomId, kind, model, usage, imageCount, error });
+                insertApiCall({ roomId, kind, model, usage, imageCount, error, durationMs });
             } catch (err) {
                 console.warn('Failed to log API usage:', err);
             }
@@ -330,6 +331,7 @@ export const registerGeminiRoutes = (app, { db, getUploadFilePath, saveGenerated
     };
 
     // Edit the room's current render, or the version named by baseVersionId (without restoring it).
+    // fast: true uses the Flash image model; the snapshot records it (plan item 3.3).
     // An optional reference image (see resolveEditReference) is sent as Image 1.
     // rawPrompt sends instructions untouched (composed prompts, item 1.3).
     app.post('/api/rooms/:id/edit', (req, res) => runOperation(req, res, {
@@ -346,6 +348,7 @@ export const registerGeminiRoutes = (app, { db, getUploadFilePath, saveGenerated
         },
         execute: async ({ send, room }) => {
             const { instructions, rawPrompt, intents, baseVersionId } = req.body;
+            const fast = req.body.fast === true;
             const base = baseVersionId ? loadVersion(baseVersionId, room.id) : null;
             const { reference } = resolveEditReference(room, req.body);
             const buffer = await gemini.editImage({
@@ -354,6 +357,7 @@ export const registerGeminiRoutes = (app, { db, getUploadFilePath, saveGenerated
                 reference: reference ? (reference.image ?? readImage(reference.url)) : undefined,
                 instructions,
                 rawPrompt: Boolean(rawPrompt),
+                fast,
                 onProgress: progressSender(send)
             });
             const label = (rawPrompt && intents ? intents : instructions).replace(/\s+/g, ' ').trim();
@@ -363,10 +367,12 @@ export const registerGeminiRoutes = (app, { db, getUploadFilePath, saveGenerated
                 source: rawPrompt ? 'edit-composed' : 'edit',
                 editInstruction: rawPrompt && intents ? intents : instructions,
                 ...(rawPrompt ? { rawPrompt: instructions } : {}),
+                ...(fast ? { model: MODEL_IMAGE_EDIT_FAST } : {}),
             };
             const notes = [
                 base ? `Edited from v${base.versionNumber}` : null,
-                reference ? `Edit reference: ${reference.label}` : null
+                reference ? `Edit reference: ${reference.label}` : null,
+                fast ? 'Fast edit (Flash)' : null
             ].filter(Boolean).join('; ');
             if (notes) snapshot.notes = notes;
             const saved = saveGeneratedBuffer(room.id, buffer, `Edit: ${label.substring(0, 50)}`, snapshot);

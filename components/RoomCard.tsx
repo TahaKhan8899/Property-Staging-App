@@ -120,6 +120,7 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, referenceOptions = [], apiUsa
   const referenceRequest = referenceOption && pinnedReferenceVersion ? { referenceVersionId: pinnedReferenceVersion.id } : {};
 
   // Optional reference for an edit (Image 1): '' = none, a sibling room id, or EDIT_REF_UPLOAD
+  const [editFast, setEditFast] = useState(false);
   const [editRef, setEditRef] = useState('');
   const [editRefVersions, setEditRefVersions] = useState<ImageVersion[]>([]);
   const [editRefVersionId, setEditRefVersionId] = useState('');
@@ -369,6 +370,7 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, referenceOptions = [], apiUsa
       // Edits the room's current version on the server; the snapshot is recorded there
       const { url, currentVersionId } = await editRoom(room.id, {
         instructions: editText,
+        ...(editFast ? { fast: true } : {}),
         ...(await buildEditReferenceRequest()),
         onProgress: (status, img) => {
           if (status) setProgressThought(status);
@@ -863,6 +865,13 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, referenceOptions = [], apiUsa
                         />
                       )}
                     </div>
+                    <label
+                      className="flex items-center gap-2 text-sm text-gray-600"
+                      title="Flash image model: faster and cheaper per edit. Quality is still being tested, so check the result."
+                    >
+                      <input type="checkbox" checked={editFast} onChange={(e) => setEditFast(e.target.checked)} />
+                      Fast edit (Flash model)
+                    </label>
                     <div className="flex gap-2 justify-end">
                       <button
                         onClick={() => {

@@ -1,6 +1,7 @@
 // Models
 export const MODEL_TEXT_ANALYSIS = 'gemini-3.1-pro-preview';
 export const MODEL_IMAGE_GENERATION = 'gemini-3-pro-image'; // Maps to "Nano Banana Pro" for 2K
+export const MODEL_IMAGE_EDIT_FAST = 'gemini-3.1-flash-image'; // Optional faster edit model (plan item 3.3)
 
 // USD per 1M tokens (standard tier, prompts <=200k), from ai.google.dev/gemini-api/docs/pricing (Oct 2026).
 // Thinking tokens bill at the text output rate. Used only for cost estimates in the usage log.

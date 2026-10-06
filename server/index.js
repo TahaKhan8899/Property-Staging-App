@@ -455,13 +455,13 @@ const insertApiCall = (c) => {
         : null;
     db.prepare(`
         INSERT INTO api_calls (id, timestamp, sessionId, sessionName, roomId, kind, model, status, error,
-            promptTokens, textOutputTokens, thoughtsTokens, imageOutputTokens, imageCount, costUsd)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            promptTokens, textOutputTokens, thoughtsTokens, imageOutputTokens, imageCount, costUsd, durationMs)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
         crypto.randomUUID(), Date.now(), session?.id ?? null, session?.name ?? null, c.roomId ?? null,
         c.kind, c.model, c.status, c.error ?? null,
         c.promptTokens ?? 0, c.textOutputTokens ?? 0, c.thoughtsTokens ?? 0, c.imageOutputTokens ?? 0,
-        c.imageCount ?? 0, c.costUsd ?? 0
+        c.imageCount ?? 0, c.costUsd ?? 0, c.durationMs ?? null
     );
 };
 
@@ -483,7 +483,8 @@ app.get('/api/sessions/:id/usage', (req, res) => {
             FROM api_calls WHERE sessionId = ?
         `).get(id);
         const byKind = db.prepare(`
-            SELECT kind, model, COUNT(*) AS calls, SUM(costUsd) AS costUsd
+            SELECT kind, model, COUNT(*) AS calls, SUM(costUsd) AS costUsd,
+                   CAST(AVG(CASE WHEN status = 'ok' THEN durationMs END) AS INTEGER) AS avgDurationMs
             FROM api_calls WHERE sessionId = ? GROUP BY kind, model ORDER BY costUsd DESC
         `).all(id);
         const byRoom = db.prepare(`
@@ -1063,10 +1064,11 @@ registerGeminiRoutes(app, {
     db,
     getUploadFilePath,
     saveGeneratedBuffer,
-    insertApiCall: ({ roomId, kind, model, usage, imageCount, error }) => insertApiCall({
+    insertApiCall: ({ roomId, kind, model, usage, imageCount, error, durationMs }) => insertApiCall({
         roomId,
         kind,
         model,
+        durationMs,
         status: error ? 'error' : 'ok',
         error: error ? (error instanceof Error ? error.message : String(error)).slice(0, 500) : undefined,
         imageCount,
