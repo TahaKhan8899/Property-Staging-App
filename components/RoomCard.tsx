@@ -215,6 +215,14 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, referenceOptions = [], apiUsa
     setPromptText(room.generatedPrompt);
   }, [room.generatedPrompt]);
 
+  // Keep "Version n of m" pointed at the room's current version. Done here, not in loadVersions, because
+  // loadVersions can run from a handler whose `room` is from before the render (stale currentVersionId).
+  useEffect(() => {
+    if (versions.length === 0) return;
+    const idx = room.currentVersionId ? versions.findIndex(v => v.id === room.currentVersionId) : -1;
+    setCurrentVersionIndex(idx !== -1 ? idx : versions.length - 1);
+  }, [versions, room.currentVersionId]);
+
   // Load versions when image is generated, and after a discard so "Back to Render" can find them
   useEffect(() => {
     if (room.id) {
@@ -245,14 +253,6 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, referenceOptions = [], apiUsa
       const versionList = await getImageVersions(room.id);
       console.log('Loaded versions:', versionList);
       setVersions(versionList);
-      // Find current version index
-      if (room.currentVersionId) {
-        const idx = versionList.findIndex(v => v.id === room.currentVersionId);
-        console.log('Current version ID:', room.currentVersionId, 'Index:', idx);
-        if (idx !== -1) setCurrentVersionIndex(idx);
-      } else {
-        setCurrentVersionIndex(versionList.length - 1);
-      }
     } catch (err) {
       console.error('Failed to load versions:', err);
     }
@@ -747,34 +747,6 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, referenceOptions = [], apiUsa
                   )}
                 </div>
               </div>
-              {candidateStrip && (
-                <div className="flex flex-col gap-1.5 rounded-lg border border-indigo-100 bg-indigo-50/50 p-2">
-                  <div className="flex items-center justify-between text-xs text-indigo-800">
-                    <span className="font-medium">
-                      {candidateStrip.versions.length < candidateStrip.requested
-                        ? `${candidateStrip.versions.length} of ${candidateStrip.requested} candidates succeeded. Pick one:`
-                        : `Pick a candidate (${candidateStrip.requested}):`}
-                    </span>
-                    <button onClick={() => setCandidateStrip(null)} className="text-indigo-500 hover:text-indigo-700">Done</button>
-                  </div>
-                  <div className="flex gap-2 overflow-x-auto">
-                    {candidateStrip.versions.map(v => {
-                      const isCurrent = v.id === room.currentVersionId;
-                      return (
-                        <button
-                          key={v.id}
-                          onClick={() => handlePickCandidate(v)}
-                          title={`Version ${v.versionNumber}: ${v.description}`}
-                          className={`relative shrink-0 w-32 aspect-video rounded overflow-hidden border-2 transition ${isCurrent ? 'border-indigo-600' : 'border-transparent hover:border-indigo-300'}`}
-                        >
-                          <img src={v.url} alt={`Candidate v${v.versionNumber}`} className="w-full h-full object-cover" />
-                          <span className="absolute bottom-0 inset-x-0 bg-black/50 text-white text-[10px] text-center">v{v.versionNumber}{isCurrent ? ' (shown)' : ''}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
               <div className="flex flex-col gap-2">
                 <div className="relative aspect-video bg-gray-900 rounded-lg overflow-hidden border border-gray-200 group">
                   <img src={room.generatedImageUrl} alt="Staged" className="w-full h-full object-cover" />
@@ -806,6 +778,34 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, referenceOptions = [], apiUsa
                     </div>
                   </div>
                 </div>
+                {candidateStrip && (
+                  <div className="flex flex-col gap-1.5 rounded-lg border border-indigo-100 bg-indigo-50/50 p-2">
+                    <div className="flex items-center justify-between text-xs text-indigo-800">
+                      <span className="font-medium">
+                        {candidateStrip.versions.length < candidateStrip.requested
+                          ? `${candidateStrip.versions.length} of ${candidateStrip.requested} candidates succeeded. Pick one:`
+                          : `Pick a candidate (${candidateStrip.requested}):`}
+                      </span>
+                      <button onClick={() => setCandidateStrip(null)} className="text-indigo-500 hover:text-indigo-700">Done</button>
+                    </div>
+                    <div className="flex gap-2 overflow-x-auto">
+                      {candidateStrip.versions.map(v => {
+                        const isCurrent = v.id === room.currentVersionId;
+                        return (
+                          <button
+                            key={v.id}
+                            onClick={() => handlePickCandidate(v)}
+                            title={`Version ${v.versionNumber}: ${v.description}`}
+                            className={`relative shrink-0 w-32 aspect-video rounded overflow-hidden border-2 transition ${isCurrent ? 'border-indigo-600' : 'border-transparent hover:border-indigo-300'}`}
+                          >
+                            <img src={v.url} alt={`Candidate v${v.versionNumber}`} className="w-full h-full object-cover" />
+                            <span className="absolute bottom-0 inset-x-0 bg-black/50 text-white text-[10px] text-center">v{v.versionNumber}{isCurrent ? ' (shown)' : ''}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
 
                 {/* Edit Interface - shown when in edit mode */}
                 {isEditingMode && (
