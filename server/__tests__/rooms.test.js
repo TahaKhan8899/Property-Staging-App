@@ -20,6 +20,12 @@ describe('upload naming', () => {
         expect(originalsOf(s)).toEqual(['Bedroom 1.jpg', 'Kitchen 1.jpg', 'Kitchen 2.jpg']);
     });
 
+    it('handles parallel uploads of files with the same original name', async () => {
+        const s = await createSession(ctx.app);
+        await Promise.all(['Kitchen', 'Bedroom', 'Bathroom', 'Patio'].map(t => uploadRoom(ctx.app, s.id, t)));
+        expect(originalsOf(s)).toEqual(['Bathroom 1.jpg', 'Bedroom 1.jpg', 'Kitchen 1.jpg', 'Patio 1.jpg']);
+    });
+
     it('does not reuse a taken number after a delete', async () => {
         const s = await createSession(ctx.app);
         const k1 = await uploadRoom(ctx.app, s.id, 'Kitchen');

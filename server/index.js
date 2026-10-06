@@ -194,7 +194,8 @@ const storage = multer.diskStorage({
         cb(null, tempDir);
     },
     filename: (req, file, cb) => {
-        cb(null, Date.now() + '-' + file.originalname);
+        // Random prefix: parallel uploads of same-named files in the same millisecond must not share a temp file
+        cb(null, `${crypto.randomUUID()}-${file.originalname}`);
     }
 });
 
@@ -488,7 +489,14 @@ app.get('/api/sessions/:id/usage', (req, res) => {
             SELECT roomId, COUNT(*) AS calls, SUM(costUsd) AS costUsd
             FROM api_calls WHERE sessionId = ? GROUP BY roomId
         `).all(id);
-        res.json({ ...totals, byKind, byRoom });
+        // Plan item 1.5: how often an approved prompt differs from what the model first wrote
+        // (manual edits, AI refine, or a hand-written prompt via PUT /prompt all count)
+        const prompts = db.prepare(`
+            SELECT COALESCE(SUM(isPromptApproved = 1), 0) AS promptsApproved,
+                   COALESCE(SUM(isPromptApproved = 1 AND COALESCE(generatedPrompt, '') != COALESCE(initialPrompt, '')), 0) AS promptsEdited
+            FROM rooms WHERE sessionId = ?
+        `).get(id);
+        res.json({ ...totals, ...prompts, byKind, byRoom });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
