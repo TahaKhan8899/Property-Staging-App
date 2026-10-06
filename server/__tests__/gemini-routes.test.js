@@ -408,11 +408,33 @@ describe('edit references (1.2)', () => {
     it('rejects self, other-session, mismatched version and bad uploads with 400 and no call', async () => {
         const { anchor, dep, a1 } = await twoAngles();
         const other = await twoAngles();
-        await request(ctx.app).post(`/api/rooms/${dep.id}/edit`).send({ instructions: 'x', referenceRoomId: dep.id }).expect(400);
+        await request(ctx.app).post(`/api/rooms/${dep.id}/edit`).send({ instructions: 'x', referenceRoomId: dep.id }).expect(400); // self without a version
         await request(ctx.app).post(`/api/rooms/${dep.id}/edit`).send({ instructions: 'x', referenceRoomId: other.anchor.id }).expect(400);
         await request(ctx.app).post(`/api/rooms/${dep.id}/edit`).send({ instructions: 'x', referenceRoomId: anchor.id, referenceVersionId: other.a1.version.id }).expect(400);
         await request(ctx.app).post(`/api/rooms/${anchor.id}/edit`).send({ instructions: 'x', referenceVersionId: a1.version.id }).expect(400); // anchor has no reference room
         await request(ctx.app).post(`/api/rooms/${dep.id}/edit`).send({ instructions: 'x', referenceImage: 'not-a-data-url' }).expect(400);
+        expect(calls).toHaveLength(0);
+    });
+
+    it('same room at another version: [that version, current, text] and a note with the version', async () => {
+        const { s, anchor, a1 } = await twoAngles();
+        const res = await request(ctx.app).post(`/api/rooms/${anchor.id}/edit`)
+            .send({ instructions: 'Use the chair from the reference', referenceRoomId: anchor.id, referenceVersionId: a1.version.id })
+            .expect(200);
+        const parts = calls[0].req.contents.parts;
+        expect(parts[0].inlineData.data).toBe(fileB64(s, 'staged/Kitchen 1_v1.jpg'));
+        expect(parts[1].inlineData.data).toBe(fileB64(s, 'staged/Kitchen 1_v2.jpg'));
+        expect(parts[2].text.startsWith('Image 1 is a reference image.')).toBe(true);
+        expect(res.body.version.promptSnapshot.notes).toBe('Edit reference: Kitchen 1 v1');
+    });
+
+    it('same room: rejects the version being edited and a version of another room', async () => {
+        const { anchor, dep, a1 } = await twoAngles();
+        const a2 = getRoom(ctx.db, anchor.id).currentVersionId;
+        await request(ctx.app).post(`/api/rooms/${anchor.id}/edit`).send({ instructions: 'x', referenceRoomId: anchor.id, referenceVersionId: a2 }).expect(400);
+        await request(ctx.app).post(`/api/rooms/${anchor.id}/edit`).send({ instructions: 'x', referenceRoomId: anchor.id, referenceVersionId: a1.version.id, baseVersionId: a1.version.id }).expect(400);
+        const depV1 = ctx.db.prepare('SELECT id FROM image_versions WHERE roomId = ?').get(dep.id).id;
+        await request(ctx.app).post(`/api/rooms/${anchor.id}/edit`).send({ instructions: 'x', referenceRoomId: anchor.id, referenceVersionId: depV1 }).expect(400);
         expect(calls).toHaveLength(0);
     });
 

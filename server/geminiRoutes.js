@@ -277,7 +277,8 @@ export const registerGeminiRoutes = (app, { db, getUploadFilePath, saveGenerated
 
     // Reference for an edit (Image 1). Either an uploaded photo (referenceImage data URL + referenceLabel),
     // or a room in the same session (referenceRoomId, defaulting to the room's own reference room when only
-    // referenceVersionId is given) at referenceVersionId or its current version. Returns { error } or
+    // referenceVersionId is given) at referenceVersionId or its current version. referenceRoomId may be this
+    // room itself when referenceVersionId names another of its versions. Returns { error } or
     // { reference: { image, label } | null }.
     const resolveEditReference = (room, body) => {
         const { referenceImage, referenceLabel, referenceVersionId } = body;
@@ -291,7 +292,15 @@ export const registerGeminiRoutes = (app, { db, getUploadFilePath, saveGenerated
         if (!refRoomId) {
             return referenceVersionId ? { error: 'referenceVersionId given but no reference room' } : { reference: null };
         }
-        if (refRoomId === room.id) return { error: 'A room cannot be its own edit reference' };
+        if (refRoomId === room.id) {
+            // Another version of this same room (e.g. take the chair from v2 into v1): needs an explicit version
+            if (!referenceVersionId) return { error: 'A room can be its own edit reference only with a referenceVersionId' };
+            const version = loadVersion(referenceVersionId, room.id);
+            if (!version) return { error: 'referenceVersionId does not belong to this room' };
+            const baseId = body.baseVersionId || room.currentVersionId;
+            if (version.id === baseId) return { error: 'referenceVersionId is the version being edited' };
+            return { reference: { url: version.url, label: `${roomBaseName(room)} v${version.versionNumber}` } };
+        }
         const ref = loadRoom(refRoomId);
         if (!ref || ref.sessionId !== room.sessionId) return { error: 'referenceRoomId must be a room in the same session' };
         const version = referenceVersionId

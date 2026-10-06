@@ -124,7 +124,8 @@ export const editRoom = async (
     rawPrompt?: boolean;
     intents?: string;
     baseVersionId?: string;
-    // Optional Image 1: a room in the same session (at a version, default current) or an uploaded photo
+    // Optional Image 1: a room in the same session (at a version, default current), this room at another
+    // version (referenceRoomId = roomId plus referenceVersionId), or an uploaded photo
     referenceRoomId?: string;
     referenceVersionId?: string;
     referenceImage?: string; // data URL
