@@ -26,7 +26,20 @@ const parseEvent = (block: string) => {
   return { event, data: data.length ? JSON.parse(data.join('\n')) : null };
 };
 
-const postWithProgress = async <T>(path: string, body: unknown, onProgress?: ProgressHandler): Promise<T> => {
+// One candidate of a multi-candidate render finished (version) or failed (error)
+export interface CandidateEvent {
+  candidate: number;
+  of: number;
+  version?: SavedVersion;
+  error?: string;
+}
+
+const postWithProgress = async <T>(
+  path: string,
+  body: unknown,
+  onProgress?: ProgressHandler,
+  onCandidate?: (e: CandidateEvent) => void
+): Promise<T> => {
   try {
     const res = await fetch(`${API_BASE}${path}`, {
       method: 'POST',
@@ -50,6 +63,7 @@ const postWithProgress = async <T>(path: string, body: unknown, onProgress?: Pro
         const { event, data } = parseEvent(buffer.slice(0, sep));
         buffer = buffer.slice(sep + 2);
         if (event === 'thought') onProgress?.(data.status, data.interimImage, data.candidate);
+        else if (event === 'candidate_done' || event === 'candidate_error') onCandidate?.(data);
         else if (event === 'done') return data as T;
         else if (event === 'error') throw new Error(data?.error || 'Request failed');
       }
@@ -72,7 +86,12 @@ export const refineRoomPrompt = (roomId: string, currentPrompt: string, feedback
 
 export const renderRoom = async (
   roomId: string,
-  options: { candidates?: number; referenceVersionId?: string; onProgress?: ProgressHandler } = {}
+  options: {
+    candidates?: number;
+    referenceVersionId?: string;
+    onProgress?: ProgressHandler;
+    onCandidate?: (e: CandidateEvent) => void;
+  } = {}
 ) => {
   const res = await postWithProgress<{
     url: string;
@@ -84,7 +103,7 @@ export const renderRoom = async (
   }>(`/rooms/${roomId}/render`, {
     candidates: options.candidates ?? 1,
     referenceVersionId: options.referenceVersionId
-  }, options.onProgress);
+  }, options.onProgress, options.onCandidate);
   return { ...withFullUrls(res), versions: res.versions.map(withFullUrls) };
 };
 

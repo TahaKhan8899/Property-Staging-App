@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { RoomData, RoomType, ImageVersion, PromptSnapshot, RoomStatus } from '../types';
 import { generateRoomPrompt, refineRoomPrompt, renderRoom, editRoom } from '../services/stagingApi';
+import type { SavedVersion } from '../services/stagingApi';
 import { getImageVersions, restoreImageVersion, uploadStagedImage, addRoomToOutput, removeRoomFromOutput } from '../services/db';
 import ImageCompareModal from './ImageCompareModal';
 import { isCurrentVersionInOutput, hasStaleOutput as isOutputStale } from '../services/outputState';
@@ -176,6 +177,23 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, referenceOptions = [], apiUsa
     return {};
   };
 
+  // Parallel candidates per render (plan 1.4). null = auto: 3 for a reference-angle room, else 1.
+  const [candidateChoice, setCandidateChoice] = useState<number | null>(null);
+  const candidateCount = candidateChoice ?? (referenceOption ? 3 : 1);
+  // Versions produced by the last multi-candidate render, shown as a pick strip until the user moves on
+  const [candidateStrip, setCandidateStrip] = useState<{ versions: SavedVersion[]; requested: number } | null>(null);
+
+  const handlePickCandidate = async (version: SavedVersion) => {
+    try {
+      const { url } = await restoreImageVersion(room.id, version.id);
+      onUpdate(room.id, { generatedImageUrl: url, currentVersionId: version.id, error: undefined });
+      const idx = versions.findIndex(v => v.id === version.id);
+      if (idx >= 0) setCurrentVersionIndex(idx);
+    } catch (err) {
+      onUpdate(room.id, { error: (err as Error).message });
+    }
+  };
+
   const resolveBasePrompt = () => (room.generatedPrompt || promptText || '').trim();
   const buildPromptSnapshot = (source: string, extra: Partial<PromptSnapshot> = {}): PromptSnapshot => {
     const basePrompt = resolveBasePrompt();
@@ -295,17 +313,28 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, referenceOptions = [], apiUsa
   const handleGenerateImage = async () => {
     if (!room.isPromptApproved) return;
 
-    setProgressThought('Initializing...');
+    const n = candidateCount;
+    let finished = 0;
+    const candidateStatus = () => `Generating ${n} candidates, ${finished} finished`;
+    setProgressThought(n > 1 ? candidateStatus() : 'Initializing...');
     setInterimImageUrl(undefined);
+    setCandidateStrip(null);
 
     try {
       // The server renders from the prompt stored in the DB, so make sure our pending writes have landed
       await onUpdate(room.id, { isGeneratingImage: true, error: undefined });
-      const { url, currentVersionId } = await renderRoom(room.id, {
+      const { url, currentVersionId, versions: newVersions, requested } = await renderRoom(room.id, {
         ...referenceRequest,
+        candidates: n,
         onProgress: (status, img) => {
-          if (status) setProgressThought(status);
+          // With several streams interleaving, show the candidate count instead of mixed thoughts
+          if (n > 1) setProgressThought(candidateStatus());
+          else if (status) setProgressThought(status);
           if (img) setInterimImageUrl(img);
+        },
+        onCandidate: () => {
+          finished += 1;
+          setProgressThought(candidateStatus());
         }
       });
       onUpdate(room.id, {
@@ -314,6 +343,9 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, referenceOptions = [], apiUsa
         currentVersionId
       });
       await loadVersions();
+      if (requested > 1) {
+        setCandidateStrip({ versions: [...newVersions].sort((a, b) => a.versionNumber - b.versionNumber), requested });
+      }
     } catch (err) {
       onUpdate(room.id, {
         isGeneratingImage: false,
@@ -328,6 +360,7 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, referenceOptions = [], apiUsa
   const handleEditImage = async () => {
     if (!editText.trim() || !room.generatedImageUrl) return;
 
+    setCandidateStrip(null);
     onUpdate(room.id, { isEditingImage: true, error: undefined });
     setProgressThought('Initializing edit...');
     setInterimImageUrl(undefined);
@@ -363,6 +396,7 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, referenceOptions = [], apiUsa
   };
 
   const handleVersionNavigation = async (direction: 'prev' | 'next') => {
+    setCandidateStrip(null);
     const newIndex = direction === 'prev' ? currentVersionIndex - 1 : currentVersionIndex + 1;
     if (newIndex < 0 || newIndex >= versions.length) return;
 
@@ -713,6 +747,34 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, referenceOptions = [], apiUsa
                   )}
                 </div>
               </div>
+              {candidateStrip && (
+                <div className="flex flex-col gap-1.5 rounded-lg border border-indigo-100 bg-indigo-50/50 p-2">
+                  <div className="flex items-center justify-between text-xs text-indigo-800">
+                    <span className="font-medium">
+                      {candidateStrip.versions.length < candidateStrip.requested
+                        ? `${candidateStrip.versions.length} of ${candidateStrip.requested} candidates succeeded. Pick one:`
+                        : `Pick a candidate (${candidateStrip.requested}):`}
+                    </span>
+                    <button onClick={() => setCandidateStrip(null)} className="text-indigo-500 hover:text-indigo-700">Done</button>
+                  </div>
+                  <div className="flex gap-2 overflow-x-auto">
+                    {candidateStrip.versions.map(v => {
+                      const isCurrent = v.id === room.currentVersionId;
+                      return (
+                        <button
+                          key={v.id}
+                          onClick={() => handlePickCandidate(v)}
+                          title={`Version ${v.versionNumber}: ${v.description}`}
+                          className={`relative shrink-0 w-32 aspect-video rounded overflow-hidden border-2 transition ${isCurrent ? 'border-indigo-600' : 'border-transparent hover:border-indigo-300'}`}
+                        >
+                          <img src={v.url} alt={`Candidate v${v.versionNumber}`} className="w-full h-full object-cover" />
+                          <span className="absolute bottom-0 inset-x-0 bg-black/50 text-white text-[10px] text-center">v{v.versionNumber}{isCurrent ? ' (shown)' : ''}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
               <div className="flex flex-col gap-2">
                 <div className="relative aspect-video bg-gray-900 rounded-lg overflow-hidden border border-gray-200 group">
                   <img src={room.generatedImageUrl} alt="Staged" className="w-full h-full object-cover" />
@@ -1034,6 +1096,19 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, referenceOptions = [], apiUsa
             >
               Edit Prompt
             </button>
+            <label
+              className="flex items-center gap-1.5 text-sm text-gray-600"
+              title="Renders run in parallel; each is saved as its own version. About $0.13 per candidate."
+            >
+              <select
+                value={candidateCount}
+                onChange={(e) => setCandidateChoice(Number(e.target.value))}
+                className="rounded-md border-gray-300 bg-white text-gray-900 shadow-sm sm:text-sm py-1 px-2 border"
+              >
+                {[1, 2, 3].map(k => <option key={k} value={k}>{k} {k === 1 ? 'candidate' : 'candidates'}</option>)}
+              </select>
+              <span className="text-xs text-gray-400 whitespace-nowrap">≈ ${(0.13 * candidateCount).toFixed(2)}</span>
+            </label>
             <button
               onClick={handleGenerateImage}
               className="px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-md hover:bg-indigo-700 shadow-sm flex items-center gap-2"

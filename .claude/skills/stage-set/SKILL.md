@@ -41,7 +41,7 @@ Without a plan, infer a layout and label it `INFERRED`.
 - `POST /api/rooms/:id/prompt` `{"userComments": "<placement in frame terms>"}`. The prompt writer never sees the floor plan, so `userComments` must carry the layout. Keep it concrete and short.
 - Read every prompt back. If it contradicts the mapping, or carries a stale line such as "no TV" that no longer applies, fix the text by hand instead of paying for a new prompt call. Then approve:
   - `PUT /api/rooms/:id/prompt` `{"prompt": "...", "approve": true}` (never PATCH `generatedPrompt`/`initialPrompt` directly)
-- Render all rooms in parallel: `POST /api/rooms/:id/render` `{"candidates": N}`.
+- Render all rooms in parallel: `POST /api/rooms/:id/render` `{"candidates": N}`. After a multi-candidate render the lowest new version is current; the response lists every new version. Taha can also pick from the candidate strip on the card.
   - N = 1 for simple rooms, 2 for anchors and re-renders.
 - QA every render by opening the JPEG under `server/uploads/<set>/staged/`. Flag doorways that disappeared, a widened camera, changed counters or fixtures, wrong sink or cabinet counts, and reflections that don't match.
   - Findings are flags for Taha, never automatic fixes.
@@ -89,5 +89,4 @@ Without a plan, infer a layout and label it `INFERRED`.
 - **Rule changes from Taha's review:** white drapes only, and the bed throw in an accent color different from the duvet. Both are now in the system prompt.
 
 ## Known gaps (update this list as plan items land)
-- 1.4: candidates exist on the API, but the UI has no picker. Taha moves between candidates with the version arrows.
 - No floor-plan input to the server's prompt writer. The plan reaches it only through `userComments`.

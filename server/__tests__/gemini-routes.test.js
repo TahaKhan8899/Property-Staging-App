@@ -141,6 +141,43 @@ describe('POST /api/rooms/:id/render', () => {
         expect(descs).toEqual(['Candidate 1 of 3', 'Candidate 2 of 3', 'Candidate 3 of 3']);
     });
 
+    it('candidates=3 leaves the lowest new version current', async () => {
+        const { r } = await approvedRoom();
+        const res = await request(ctx.app).post(`/api/rooms/${r.id}/render`).send({ candidates: 3 }).expect(200);
+        const lowest = res.body.versions.reduce((a, b) => (a.versionNumber <= b.versionNumber ? a : b));
+        expect(lowest.versionNumber).toBe(1);
+        expect(res.body.currentVersionId).toBe(lowest.id);
+        expect(getRoom(ctx.db, r.id).currentVersionId).toBe(lowest.id);
+    });
+
+    it('streams candidate_done per candidate and reports partial failures', async () => {
+        const { r } = await approvedRoom();
+        let n = 0;
+        setGeminiClientForTests({
+            models: {
+                generateContentStream: async (req) => {
+                    calls.push({ type: 'image', req });
+                    const fail = ++n === 2;
+                    return (async function* () {
+                        yield { candidates: [{ content: { parts: [fail ? { text: 'no image' } : { inlineData: { mimeType: 'image/png', data: png } }] } }], usageMetadata: USAGE };
+                    })();
+                }
+            }
+        });
+        const res = await request(ctx.app)
+            .post(`/api/rooms/${r.id}/render`)
+            .set('Accept', 'text/event-stream')
+            .send({ candidates: 3 })
+            .buffer()
+            .parse((resp, cb) => { let t = ''; resp.on('data', c => { t += c; }); resp.on('end', () => cb(null, t)); })
+            .expect(200);
+        expect(res.body.match(/event: candidate_done/g)).toHaveLength(2);
+        expect(res.body.match(/event: candidate_error/g)).toHaveLength(1);
+        const done = JSON.parse(res.body.split('event: done\ndata: ')[1].split('\n')[0]);
+        expect(done).toMatchObject({ requested: 3, failed: 1 });
+        expect(done.versions).toHaveLength(2);
+    });
+
     it('sends [reference, target, text] and notes the reference when the room has a reference render', async () => {
         const s = await createSession(ctx.app);
         const anchor = await uploadRoom(ctx.app, s.id, 'Living Room');

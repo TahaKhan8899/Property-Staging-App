@@ -194,29 +194,43 @@ export const registerGeminiRoutes = (app, { db, getUploadFilePath, saveGenerated
 
             const outcomes = await Promise.allSettled(Array.from({ length: n }, async (_, i) => {
                 const k = i + 1;
-                const buffer = await gemini.renderImage({
-                    roomId: room.id,
-                    image,
-                    reference: reference?.image,
-                    prompt,
-                    onProgress: progressSender(send, k)
-                });
-                const notes = [
-                    manualPrompt ? 'Prompt: manual' : null,
-                    reference ? `Reference angle: ${reference.label}` : null,
-                    n > 1 ? `Candidate ${k} of ${n}` : null
-                ].filter(Boolean).join('; ');
-                return saveGeneratedBuffer(
-                    room.id,
-                    buffer,
-                    n > 1 ? `Candidate ${k} of ${n}` : 'Initial generation',
-                    { basePrompt: prompt, capturedAt: Date.now(), source: 'generate', ...(notes ? { notes } : {}) }
-                );
+                try {
+                    const buffer = await gemini.renderImage({
+                        roomId: room.id,
+                        image,
+                        reference: reference?.image,
+                        prompt,
+                        onProgress: progressSender(send, k)
+                    });
+                    const notes = [
+                        manualPrompt ? 'Prompt: manual' : null,
+                        reference ? `Reference angle: ${reference.label}` : null,
+                        n > 1 ? `Candidate ${k} of ${n}` : null
+                    ].filter(Boolean).join('; ');
+                    const saved = saveGeneratedBuffer(
+                        room.id,
+                        buffer,
+                        n > 1 ? `Candidate ${k} of ${n}` : 'Initial generation',
+                        { basePrompt: prompt, capturedAt: Date.now(), source: 'generate', ...(notes ? { notes } : {}) }
+                    );
+                    send('candidate_done', { candidate: k, of: n, version: { ...saved.version, url: saved.url } });
+                    return saved;
+                } catch (err) {
+                    send('candidate_error', { candidate: k, of: n, error: err?.message || String(err) });
+                    throw err;
+                }
             }));
 
             const saved = outcomes.filter(o => o.status === 'fulfilled').map(o => o.value);
             const errors = outcomes.filter(o => o.status === 'rejected').map(o => o.reason?.message || String(o.reason));
             if (saved.length === 0) throw new Error(`Failed to generate staged image: ${errors[0]}`);
+
+            // Candidates finish in any order; leave the lowest new version current so the result is predictable
+            if (saved.length > 1) {
+                const first = saved.reduce((a, b) => (a.version.versionNumber <= b.version.versionNumber ? a : b));
+                const row = loadVersion(first.version.id, room.id);
+                db.prepare('UPDATE rooms SET generatedImageUrl = ?, currentVersionId = ? WHERE id = ?').run(row.url, row.id, room.id);
+            }
 
             const current = loadRoom(room.id);
             return {
