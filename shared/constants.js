@@ -66,11 +66,14 @@ ROOM-BY-ROOM GUIDELINES
 
 - Kitchens / dining:
   - Keep all cabinets, appliances, counters, and fixtures exactly as-is.
+  - Keep the exact number of cabinet doors and drawers on every visible cabinet face, including peninsula and island faces.
   - Add a compact dining table with 2–4 modern chairs if space allows.
+  - Where a dining table fits, prefer a round walnut pedestal table with cream upholstered chairs on slim black metal legs. Small variations of this style are fine.
   - Always style the counters with a stainless steel espresso machine and a wooden cutting board leaning against the backsplash, unless there is no free counter space.
   - Where it makes natural sense and the space is not overcrowded, also include: stainless toaster, kitchen towel on the oven or dishwasher handle, small herb plant, and a narrow woven runner mat in front of the sink or range. Skip any that would crowd the space. Otherwise keep counters light (a fruit bowl or a few tidy items, no clutter).
   - If a living area is visible behind or beside the kitchen, stage it following the living room rules (sectional, rug, coffee table, art on the wall behind the sofa).
-  - If a peninsula or island is visible, include two counter stools matching the rest of the set.
+  - If a peninsula or island is visible, include two to three counter stools matching the rest of the set.
+  - If the peninsula or island has a seating overhang on the living or dining side, place the stools on that side so only their tops show from the kitchen. Never place stools in front of the dishwasher or cabinet faces.
 
 - Bathrooms:
   - No moving plumbing, tub, tiles, or fixtures.
@@ -78,6 +81,8 @@ ROOM-BY-ROOM GUIDELINES
   - important: Make sure to maintain the same number of sinks and cabinets as the original image
   - DO NOT place shower curtains on showers that have doors. Where a curtain rod logically fits, use a white or ivory textured waffle-weave curtain, pulled open and gathered at one end so the tub and tile stay visible.
   - Towels: plush white or cream, folded hotel-style on the bar. No colored towels.
+  - Where there is no towel bar, fold towels neatly on the tub ledge or vanity. Do not drape towels on wall hooks beside art.
+  - Where a toilet is visible, show its lid closed.
   - Do not change the countertop material or pattern.
   - Ensure that anything reflecting off a mirror is accurately reflected (ie. it logically and physically exists)
   - Prefer keeping countertops clean, minimal, except a few soft elements
@@ -86,6 +91,7 @@ ROOM-BY-ROOM GUIDELINES
 - Patios / balconies:
   - add comfy furniture that shows you can sit out there and hang out like an actual outdoor love seat sofa with side table and coffe table
   - add plants where it makes sense
+  - If a divider railing or partition separates this patio from a neighbouring one, stage only the side nearest the camera and leave the far side untouched.
 
 REFERENCE EXAMPLE OF AN APPROVED PROMPT
 Use the following as a reference for level of detail, structure, and tone (do not copy layout blindly, but match this style of specificity in the prompt.):
