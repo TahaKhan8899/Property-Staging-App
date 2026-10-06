@@ -39,15 +39,19 @@ Match this brand style as closely as possible:
 - Any paintings should not obstruct any wall fixtures or architectural elements.
 
 ROOM-BY-ROOM GUIDELINES
+- All rooms:
+  - Do not leave a large blank wall in frame, including walls of adjacent rooms visible in the background (for example the living area behind a kitchen). Give it one modern abstract art piece in muted tones, without covering any switches, outlets, vents, or other fixtures.
+  - Window drapes: white or soft-cream linen, floor-length, hanging straight with soft vertical folds and pulled open to frame the window. No tie-backs, never cinched or gathered in the middle, never beige or tan.
+
 - Living rooms:
-  - Hero piece is a neutral modern sofa or sectional (often light beige linen).
-  - Optionally add 1–2 accent chairs (can be caramel leather, muted color fabric, or curved lounge chairs).
+  - Hero piece is a light-beige L-shaped sectional when the space allows; otherwise a light-beige linen modern sofa.
+  - Skip accent chairs by default. Add at most one (muted fabric or curved lounge chair) only when the room is clearly large and the chair will not crowd the walkway.
   - Use a layered area rug to define the seating zone.
   - Coffee table: round or soft-rectangular wood/stone/terrazzo with a few curated objects.
   - Place floor or table lamps for warmth and realism.
   - Use wall art above sofas or fireplaces (modern abstract prints).
   - Add plants in corners or near windows, without blocking views.
-  - prefer curtains on windows where it makes sense
+  - prefer drapes on windows where it makes sense (see the drapes rule above)
 
 - Bedrooms:
   - Modern platform or upholstered bed with neutral bedding and a throw at the foot.
@@ -57,15 +61,15 @@ ROOM-BY-ROOM GUIDELINES
   - Do not leave a large bare wall in frame: balance it with wall art or two floating light-oak shelves with 2-3 small items.
   - Optionally a bench, accent chair, or small loveseat at the foot of the bed or by a wall.
   - Modern art above the headboard or anywhere else that makes sense; keep the room airy and uncluttered.
-  - prefer white or soft-cream linen drapes on windows where it makes sense, never beige or tan
+  - prefer drapes on windows where it makes sense (see the drapes rule above)
   - important: make sure all of the walls that are visible in the original image are still visible from this perspective
 
 - Kitchens / dining:
   - Keep all cabinets, appliances, counters, and fixtures exactly as-is.
   - Add a compact dining table with 2–4 modern chairs if space allows.
-  - Style counters lightly: cutting board, fruit bowl, plant, coffee maker, or a few tidy kitchen items.
-  - Prefer stainless steel espresso machines and toasters on countertops where it makes sense
-  - Where it makes natural sense and the space is not overcrowded, include these standing items: stainless toaster, kitchen towel on the oven or dishwasher handle, wooden cutting board against the backsplash, small herb plant, and a narrow woven runner mat in front of the sink or range. Skip any that would crowd the space.
+  - Always style the counters with a stainless steel espresso machine and a wooden cutting board leaning against the backsplash, unless there is no free counter space.
+  - Where it makes natural sense and the space is not overcrowded, also include: stainless toaster, kitchen towel on the oven or dishwasher handle, small herb plant, and a narrow woven runner mat in front of the sink or range. Skip any that would crowd the space. Otherwise keep counters light (a fruit bowl or a few tidy items, no clutter).
+  - If a living area is visible behind or beside the kitchen, stage it following the living room rules (sectional, rug, coffee table, art on the wall behind the sofa).
   - If a peninsula or island is visible, include two counter stools matching the rest of the set.
 
 - Bathrooms:
