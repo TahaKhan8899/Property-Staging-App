@@ -427,3 +427,5 @@ Targets after Batch 1: versions per room at or under 4, edits per set at or unde
 **Status: done** (`a839548`). `POST /render` and `/prompt` take `referenceMode: "reference" | "text"`; `/render` also takes an array, one mode per candidate. Text mode renders a linked dependent from its own photo without the anchor image. Why: in 504-201 all 8 reference-mode kitchen renders tightened the lens; text-only held it in 3 of 6. The stage-set skill now defaults dependents to text mode.
 
 **Status note (2026-10-06, after 504-201):** also shipped a same-room edit reference (extends 1.2, `0a043b6`), candidate-order version numbers (`b571244`), designer prompt rules (`aadf273`) and the stage-set skill update (`38eda4e`). 1.3, 2.1 and 3.2 stay deferred; see `504-201-Analysis.md`.
+
+**Status note (2026-10-06, after 504-202):** shipped the room-relative seating rule in the designer prompt (`6363a6d`), structured `referenceMode`/`referenceRoomId`/`referenceVersionId` in version snapshots (`89c89d2`) and the stage-set skill update (`2e3a4d5`). 3.3 (Flash) stays as is with no further work. 1.3, 2.1 and 3.2 stay deferred; see `504-202-Analysis.md`.
