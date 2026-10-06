@@ -18,6 +18,11 @@ if [ ! -d "$(dirname "$(dirname "$DEST")")" ]; then
 fi
 mkdir -p "$DEST/db" "$DEST/uploads"
 
+# launchd fires hourly + at login; only the first run of the day does work. --force to run anyway.
+if [ "${1:-}" != "--force" ] && compgen -G "$DEST/db/database_$(date '+%Y-%m-%d')_*.sqlite" > /dev/null; then
+  exit 0
+fi
+
 # DB snapshot: write locally first, then move, so Drive never syncs a half-written file
 STAMP="$(date '+%Y-%m-%d_%H%M')"
 TMP="$(mktemp -t staging-db)"
@@ -27,13 +32,14 @@ trap 'rm -f "$TMP"' EXIT
 mv "$TMP" "$DEST/db/database_$STAMP.sqlite"
 log "DB snapshot: database_$STAMP.sqlite ($(du -h "$DEST/db/database_$STAMP.sqlite" | cut -f1))"
 
-# Keep only the newest $KEEP snapshots
-ls -1t "$DEST/db"/database_*.sqlite | tail -n +$((KEEP + 1)) | while read -r old; do
-  rm -f "$old"
-  log "Pruned $(basename "$old")"
-done
-
 # Images: mirror
 /usr/bin/rsync -a --delete "$APP_DIR/server/uploads/" "$DEST/uploads/"
 log "uploads/ synced ($(du -sh "$DEST/uploads" | cut -f1))"
+
+# Keep only the newest $KEEP snapshots. Drive's file provider occasionally lists the folder as
+# empty right after a write; tolerate that rather than failing (pruning catches up next run).
+{ ls -1t "$DEST/db"/database_*.sqlite 2>/dev/null || true; } | tail -n +$((KEEP + 1)) | while read -r old; do
+  rm -f "$old"
+  log "Pruned $(basename "$old")"
+done
 log "Backup OK"
