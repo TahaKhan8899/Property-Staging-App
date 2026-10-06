@@ -212,6 +212,7 @@ describe('POST /api/rooms/:id/render', () => {
         expect(parts[2].text).toBe('go');
         const snap = JSON.parse(ctx.db.prepare('SELECT promptSnapshot FROM image_versions WHERE roomId = ?').get(dep.id).promptSnapshot);
         expect(snap.notes).toBe('Reference angle: Living Room 1 v1');
+        expect(snap).toMatchObject({ referenceMode: 'reference', referenceRoomId: anchor.id, referenceVersionId: getRoom(ctx.db, anchor.id).currentVersionId });
     });
 
     it('returns an error and logs a failed row when the model returns no image', async () => {
@@ -346,6 +347,7 @@ describe('version targeting (1.1c)', () => {
         const res = await request(ctx.app).post(`/api/rooms/${dep.id}/render`).send({ referenceVersionId: v1.version.id }).expect(200);
         expect(imageDataSent(calls[0], 0)).toBe(fileB64(s, 'staged/Living Room 1_v1.jpg'));
         expect(res.body.versions[0].promptSnapshot.notes).toBe('Reference angle: Living Room 1 v1');
+        expect(res.body.versions[0].promptSnapshot).toMatchObject({ referenceMode: 'reference', referenceRoomId: anchor.id, referenceVersionId: v1.version.id });
         // The anchor's current pointer did not move
         expect(getRoom(ctx.db, anchor.id).generatedImageUrl).toBe(`${s.name}/staged/Living Room 1_v2.jpg`);
     });
@@ -416,6 +418,8 @@ describe('edit references (1.2)', () => {
         expect(parts[1].inlineData.data).toBe(fileB64(s, 'staged/Kitchen 2_v1.jpg'));
         expect(parts[2].text.startsWith('Image 1 is a reference image.')).toBe(true);
         expect(res.body.version.promptSnapshot.notes).toBe('Edit reference: Kitchen 1 v2');
+        expect(res.body.version.promptSnapshot).toMatchObject({ referenceRoomId: anchor.id, referenceVersionId: getRoom(ctx.db, anchor.id).currentVersionId });
+        expect(res.body.version.promptSnapshot).not.toHaveProperty('referenceMode');
         expect(apiRows(dep.id).map(x => x.kind)).toEqual(['edit']);
     });
 
@@ -428,6 +432,7 @@ describe('edit references (1.2)', () => {
         const res = await request(ctx.app).post(`/api/rooms/${dep.id}/edit`).send({ instructions: 'x', referenceVersionId: a1.version.id }).expect(200);
         expect(calls[1].req.contents.parts[0].inlineData.data).toBe(fileB64(s, 'staged/Kitchen 1_v1.jpg'));
         expect(res.body.version.promptSnapshot.notes).toBe('Edit reference: Kitchen 1 v1');
+        expect(res.body.version.promptSnapshot).toMatchObject({ referenceRoomId: anchor.id, referenceVersionId: a1.version.id });
     });
 
     it('combines with baseVersionId in the note', async () => {
@@ -445,6 +450,8 @@ describe('edit references (1.2)', () => {
         const parts = calls[0].req.contents.parts;
         expect(parts[0].inlineData).toEqual({ mimeType: 'image/png', data: png });
         expect(res.body.version.promptSnapshot.notes).toBe('Edit reference: sectional.png');
+        expect(res.body.version.promptSnapshot).not.toHaveProperty('referenceRoomId');
+        expect(res.body.version.promptSnapshot).not.toHaveProperty('referenceVersionId');
     });
 
     it('rejects self, other-session, mismatched version and bad uploads with 400 and no call', async () => {
@@ -468,6 +475,7 @@ describe('edit references (1.2)', () => {
         expect(parts[1].inlineData.data).toBe(fileB64(s, 'staged/Kitchen 1_v2.jpg'));
         expect(parts[2].text.startsWith('Image 1 is a reference image.')).toBe(true);
         expect(res.body.version.promptSnapshot.notes).toBe('Edit reference: Kitchen 1 v1');
+        expect(res.body.version.promptSnapshot).toMatchObject({ referenceRoomId: anchor.id, referenceVersionId: a1.version.id });
     });
 
     it('same room: rejects the version being edited and a version of another room', async () => {
@@ -512,6 +520,10 @@ describe('render referenceMode (1.4b)', () => {
             'Text mode: reference not sent; Candidate 1 of 2',
             'Text mode: reference not sent; Candidate 2 of 2'
         ]);
+        res.body.versions.forEach(v => {
+            expect(v.promptSnapshot).toMatchObject({ referenceMode: 'text', referenceRoomId: anchor.id });
+            expect(v.promptSnapshot).not.toHaveProperty('referenceVersionId');
+        });
         expect(getRoom(ctx.db, dep.id).referenceRoomId).toBe(anchor.id);
     });
 
@@ -525,6 +537,9 @@ describe('render referenceMode (1.4b)', () => {
             'Candidate 2 of 3': 'Text mode: reference not sent; Candidate 2 of 3',
             'Candidate 3 of 3': 'Reference angle: Living Room 1 v1; Candidate 3 of 3'
         });
+        const modes = Object.fromEntries(ctx.db.prepare('SELECT description, promptSnapshot FROM image_versions WHERE roomId = ?').all(dep.id)
+            .map(v => [v.description, JSON.parse(v.promptSnapshot).referenceMode]));
+        expect(modes).toEqual({ 'Candidate 1 of 3': 'text', 'Candidate 2 of 3': 'text', 'Candidate 3 of 3': 'reference' });
     });
 
     it("'reference' or no referenceMode behaves as before", async () => {
@@ -537,6 +552,8 @@ describe('render referenceMode (1.4b)', () => {
         const { r } = await approvedRoom();
         const res = await request(ctx.app).post(`/api/rooms/${r.id}/render`).send({ referenceMode: 'text' }).expect(200);
         expect(res.body.versions[0].promptSnapshot.notes).toBeUndefined();
+        expect(res.body.versions[0].promptSnapshot).not.toHaveProperty('referenceMode');
+        expect(res.body.versions[0].promptSnapshot).not.toHaveProperty('referenceRoomId');
     });
 
     it('rejects bad modes, empty or long arrays, and a mismatched candidates count with 400 and no call', async () => {

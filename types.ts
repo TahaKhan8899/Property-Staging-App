@@ -18,6 +18,11 @@ export interface PromptSnapshot {
   notes?: string;
   rawPrompt?: string | null;
   model?: string; // set when a non-default model made the version (fast edits)
+  // Renders of a linked room: the mode actually used per candidate and the reference room/version.
+  // Edits with a room reference: referenceRoomId/referenceVersionId (no referenceMode). Uploaded photos set neither.
+  referenceMode?: 'reference' | 'text';
+  referenceRoomId?: string;
+  referenceVersionId?: string;
 }
 
 export interface ImageVersion {

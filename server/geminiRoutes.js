@@ -71,14 +71,16 @@ export const registerGeminiRoutes = (app, { db, getUploadFilePath, saveGenerated
         if (!ref) return null;
         if (referenceVersionId) {
             const version = loadVersion(referenceVersionId, ref.id);
-            return { image: readImage(version.url), label: `${roomBaseName(ref)} v${version.versionNumber}` };
+            return { image: readImage(version.url), label: `${roomBaseName(ref)} v${version.versionNumber}`, roomId: ref.id, versionId: version.id };
         }
         if (!ref.generatedImageUrl) return null;
         try {
             const current = ref.currentVersionId ? loadVersion(ref.currentVersionId, ref.id) : null;
             return {
                 image: readImage(ref.generatedImageUrl),
-                label: current ? `${roomBaseName(ref)} v${current.versionNumber}` : roomBaseName(ref)
+                label: current ? `${roomBaseName(ref)} v${current.versionNumber}` : roomBaseName(ref),
+                roomId: ref.id,
+                versionId: current ? current.id : null
             };
         } catch {
             return null; // stale reference falls back to the single-image flow
@@ -252,12 +254,18 @@ export const registerGeminiRoutes = (app, { db, getUploadFilePath, saveGenerated
                     modes[i] === 'text' && room.referenceRoomId ? 'Text mode: reference not sent' : null,
                     n > 1 ? `Candidate ${k} of ${n}` : null
                 ].filter(Boolean).join('; ');
+                // Structured record of what a linked room's candidate was rendered against (the mode actually used)
+                const referenceFields = room.referenceRoomId ? {
+                    referenceMode: reference ? 'reference' : 'text',
+                    referenceRoomId: room.referenceRoomId,
+                    ...(reference?.versionId ? { referenceVersionId: reference.versionId } : {})
+                } : {};
                 try {
                     const entry = saveGeneratedBuffer(
                         room.id,
                         outcome.value,
                         n > 1 ? `Candidate ${k} of ${n}` : 'Initial generation',
-                        { basePrompt: prompt, capturedAt: Date.now(), source: 'generate', ...(notes ? { notes } : {}) }
+                        { basePrompt: prompt, capturedAt: Date.now(), source: 'generate', ...referenceFields, ...(notes ? { notes } : {}) }
                     );
                     send('candidate_done', { candidate: k, of: n, version: { ...entry.version, url: entry.url } });
                     saved.push(entry);
@@ -312,7 +320,7 @@ export const registerGeminiRoutes = (app, { db, getUploadFilePath, saveGenerated
             if (!version) return { error: 'referenceVersionId does not belong to this room' };
             const baseId = body.baseVersionId || room.currentVersionId;
             if (version.id === baseId) return { error: 'referenceVersionId is the version being edited' };
-            return { reference: { url: version.url, label: `${roomBaseName(room)} v${version.versionNumber}` } };
+            return { reference: { url: version.url, label: `${roomBaseName(room)} v${version.versionNumber}`, roomId: room.id, versionId: version.id } };
         }
         const ref = loadRoom(refRoomId);
         if (!ref || ref.sessionId !== room.sessionId) return { error: 'referenceRoomId must be a room in the same session' };
@@ -325,7 +333,9 @@ export const registerGeminiRoutes = (app, { db, getUploadFilePath, saveGenerated
         return {
             reference: {
                 url,
-                label: version ? `${roomBaseName(ref)} v${version.versionNumber}` : roomBaseName(ref)
+                label: version ? `${roomBaseName(ref)} v${version.versionNumber}` : roomBaseName(ref),
+                roomId: ref.id,
+                versionId: version ? version.id : null
             }
         };
     };
@@ -368,6 +378,8 @@ export const registerGeminiRoutes = (app, { db, getUploadFilePath, saveGenerated
                 editInstruction: rawPrompt && intents ? intents : instructions,
                 ...(rawPrompt ? { rawPrompt: instructions } : {}),
                 ...(fast ? { model: MODEL_IMAGE_EDIT_FAST } : {}),
+                ...(reference?.roomId ? { referenceRoomId: reference.roomId } : {}),
+                ...(reference?.versionId ? { referenceVersionId: reference.versionId } : {}),
             };
             const notes = [
                 base ? `Edited from v${base.versionNumber}` : null,
