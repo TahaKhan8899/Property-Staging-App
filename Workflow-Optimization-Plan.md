@@ -138,6 +138,37 @@
 
 ---
 
+### 1.1b Server-side Gemini routes (added 2026-10-06 by Taha)
+
+**Goal.** Every Gemini call runs today in the browser (`services/geminiService.ts`: API key from `localStorage`, JPEG conversion on a `<canvas>`). Express only stores files. Move the calls behind server routes so the UI and an AI agent (a Claude Code session or skill such as a future `/stage-set <folder>`) drive the same endpoints, renders survive a closed tab, and items 1.2 to 2.2 are built once, server-side. Without this, those items are reachable only by browser automation.
+
+**Design.**
+- New server module `server/gemini.js` (or `.ts` via a shared build-free import) holding the call logic. Reuse the pure builders extracted in item 0 (`buildEditPrompt`, `buildImageParts`, `collectImageFromStream`, `computeCallCost`); move them to a module both client tests and server can import, with no browser APIs.
+- API key: `GEMINI_API_KEY` from the server environment (`.env.local`, already read). The browser key paths stay only as long as the client still calls Gemini directly during the migration, then are removed.
+- Routes, each logging to `api_calls` server-side with the same kinds and cost math, and saving images through the existing versioning code path (shared function, not an internal HTTP call), so every saved image still gets a `promptSnapshot`:
+  - `POST /api/rooms/:id/prompt` `{ userComments? }` → writes `initialPrompt` and `generatedPrompt`; uses `generateReferenceAnglePrompt` when the room has `referenceRoomId`.
+  - `POST /api/rooms/:id/refine-prompt` `{ feedback }`.
+  - `POST /api/rooms/:id/render` `{ candidates?: 1..3 }` → renders from the approved prompt (and the reference room's current image when set); returns the new versions.
+  - `POST /api/rooms/:id/edit` `{ instructions, rawPrompt?, referenceRoomId? }`.
+- Final image: re-encode to JPEG with Sharp (quality 90, white background flatten) instead of the client canvas.
+- Progress: each long route streams Server-Sent Events (`thought` text, interim image data URL, `done` with the saved version, `error`) when the request sends `Accept: text/event-stream`; otherwise it waits and returns JSON. The UI uses SSE; an agent can use plain JSON.
+- Client: `RoomCard` switches to these routes. Behavior and UI stay the same (interim thoughts and previews still shown).
+- Concurrency: per-room in-flight guard so a second render on the same room returns 409 instead of racing version numbers.
+
+**Tests to add.** Inject a fake Gemini client into `server/gemini.js` (no network): prompt route writes both prompt columns; render with `candidates: 3` saves versions 1 to 3 and logs three `generate` rows; edit with `rawPrompt` sends the text untouched; SSE emits `thought`, `done`; 409 on concurrent render; missing `GEMINI_API_KEY` returns a clear 500.
+
+**Acceptance.**
+- With the browser's `localStorage` key cleared, prompt, render and edit all work from the UI.
+- `curl` can run prompt → approve (`PATCH`) → render → edit for a room and get saved versions back.
+- `api_calls` rows and costs match what the client logged before for the same calls.
+- Closing the tab mid-render still saves the version.
+
+**Manual test.** Stage one room end to end in the UI. Then do the same room with `curl` only.
+
+**Order.** Items 1.2, 1.3, 1.4, 2.1 detection, 2.2 and 3.2 are implemented on these routes, not in `geminiService.ts`.
+
+---
+
 ### 1.2 Reference image on edits
 
 **Goal.** An edit can carry a second image: the anchor angle of the same room, or a photo of a specific piece, so "exactly that sectional" lands in one try instead of eight. Saves 15 to 25 min per set.
