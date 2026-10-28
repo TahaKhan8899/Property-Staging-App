@@ -38,7 +38,7 @@ Note for editors of this file: never write a dollar sign followed by a digit her
   - File names Taha renamed (`bath`, `bed1`, `living`, `kitchen+living2`) are authoritative.
   - Arthur's raw files have random AI names ("bright minimal entryway with window") that mean nothing. For those, you do the identification work: room type, camera direction and same-space grouping, from the photo's fixed features and the floor plan. Propose it at Stop 1 so Taha corrects instead of researching. Never ask Taha to rename files first.
   - If a photo seems to contradict a name Taha gave, say so as a question at Stop 1, but map it as named.
-- Room types: `Bedroom`, `Living Room`, `Kitchen`, `Bathroom`, `Patio`, `Other`. A close-up of the living area is `Living Room`. A wide open-plan shot that shows the kitchen is `Kitchen`.
+- Room types: `Bedroom`, `Living Room`, `Kitchen`, `Bathroom`, `Patio`, `Other`. A close-up of the living area is `Living Room`. Name an open-plan photo by the zone that is its main subject: a wide shot whose subject is the living area is `Living Room` even with the kitchen in the background, and one whose subject is the kitchen is `Kitchen`. The type sets the delivered file name, so confirm each name at Stop 1. EEZ-B1's open-plan living shot was typed `Kitchen` and shipped as "Kitchen 3.jpg".
 
 ### 1. Read the floor plan and map it into each photo
 Without a plan, infer a layout and label it `INFERRED`.
