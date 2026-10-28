@@ -50,6 +50,7 @@ Without a plan, infer a layout and label it `INFERRED`.
   - **The anchor is the close-up, single-room shot** (usually the living-room view). It is easier to put well-rendered furniture into the background of a wide shot than to render background furniture well in a close-up.
   - The wide shot that shows that room in the background is the dependent, and it must show the same furniture as the anchor.
 - **Style kit.** List the sessions (`GET /api/sessions`) and find earlier sets from the same building (same name prefix, e.g. `504-`). Read their rooms (`GET /api/sessions/:id/rooms`) and pull the approved dining set, sectional and counter-stool descriptions from `generatedPrompt`. Use them as the default for this set; small variations are fine.
+  - **The living-room hero piece is the style kit's L-sectional**, even when the brief asks for a spacious feel or a "sofa on legs". To Arthur, a sectional is what makes the space feel bigger. If Taha's command explicitly asks for a plain sofa, confirm it at Stop 1 as a Need-from-you line before rendering. In EEZ-B1 the agent rendered the brief's sofa, Taha swapped it for a sectional at Stop 2, and the anchor and its dining edit had to be redone.
 - **Same floor plan as an earlier set** (Taha says so, or the plans match):
   - Map each earlier room to this set's room **by camera angle**, not by card name. Card numbers can be reversed between sets (504-202's Kitchen 1 is 504-102's Kitchen 1 angle only by luck of upload order).
   - Open the earlier room's output image (`server/uploads/<earlier set>/output/`) and its `generatedPrompt`.
@@ -68,6 +69,9 @@ Rules:
 - Where Taha labeled the files or named rooms in his command, those labels win; just confirm them.
 - Any room type, camera direction or placement under 65% gets its own Need-from-you line with your proposal ("Kitchen 2 sofa: right side, back to the counters, front facing the left wall. OK?"). Never put a low-confidence layout only under "Also check for". 504-202's Kitchen 2 sofa sat at 55% there, and round 1 rendered it wrong.
 - For a same-plan set, show which earlier room maps to which room, by camera angle.
+- **Camera position.** For every dependent or wide shot, give one Need-from-you line naming where the camera stands in plan terms and what that puts in frame ("living2 camera: at the front door, so the sectional's chaise, rug and coffee table show at the right. OK?"). Base it on the plan and the photo's fixed features, not on where furniture would be convenient to hide.
+  - Never place the main seating group behind the camera to save matching work. Taha wants the living seating visible in open-plan shots.
+  - In EEZ-B1 the agent put the `living2` camera behind the sofa, so round 1 had no seating group. Taha pointed out that the camera was at the front door, and the seating group should show at the right edge. It cost a full round.
 
 Add the style-kit picks in one line. Wait for Taha.
 
@@ -250,6 +254,19 @@ Also check for: neighbour areas, dividers, and anything I called clean.
   - a dining-chair count that matches the anchor;
   - don't strip designer art;
   - the first accepted angle is the anchor.
+
+## Worked example: EEZ-B1
+
+- **Photos:** `bath` (portrait 1024×1536), `bedroom-master`, `bedroom2`, `kitchen-main`, `kitchen-with-laundry`, `living1` (toward the front door), `living2` (open plan, toward the kitchen), plus a 2D plan and a 3D render. A new floor plan.
+- **Result:** 62 minutes of Taha's time, USD 3.81, 32 calls (0 failed). Both bedrooms, the bath and `kitchen-main` were accepted on v1.
+- **Bedroom labels:** Taha's file names had the bedrooms swapped. The master is the only room with the angled entry door, which settled it; window counts did not, since both rooms have two.
+- **Portrait bath:** the 16:9 render recomposed cleanly into landscape and was accepted on v1.
+- **Lost rounds:**
+  - the brief's sofa was replaced by a sectional at Stop 2;
+  - the `living2` camera was placed behind the sofa;
+  - three tries failed to rotate the kitchen runner (two edits, one fresh render), and Taha accepted it unrotated.
+- **Taha's picks over the agent's:** colour and lighting truth over a little lost floor (`kitchen-main` v1); cabinet scale over a fuller ceiling (`kitchen-with-laundry` v1, then v7). He cropped an invented edge door out of `living2` v6 in Canva and uploaded it as v7.
+- **Rules added:** sectional by default; camera position as a Stop 1 Need-from-you line.
 
 ## Known gaps (update this list as plan items land)
 - No floor-plan input to the server's prompt writer. The plan reaches it only through `userComments`.
