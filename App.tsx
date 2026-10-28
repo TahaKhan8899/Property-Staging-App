@@ -22,6 +22,8 @@ import { hasStaleOutput } from './services/outputState';
 import type { SessionEntity, SessionUsage } from './services/db';
 
 const LAST_SESSION_KEY = 'staging:lastSessionId';
+// index.html reads this key before first paint to set the initial theme
+const THEME_KEY = 'staging:theme';
 
 const SESSION_STATUS_META: Record<SessionStatus, { label: string; dotClass: string; activeClasses: string }> = {
   not_started: {
@@ -67,8 +69,15 @@ function App() {
   const [draggedSessionId, setDraggedSessionId] = useState<string | null>(null);
   const [dragOverSessionId, setDragOverSessionId] = useState<string | null>(null);
   const [isSavingSessionOrder, setIsSavingSessionOrder] = useState(false);
+  const [isDark, setIsDark] = useState(() => document.documentElement.classList.contains('dark'));
   const initialSessionOrderRef = useRef<string[]>([]);
   const dragAcceptedRef = useRef(false);
+
+  // Theme: the class drives the dark overrides in index.html
+  useEffect(() => {
+    document.documentElement.classList.toggle('dark', isDark);
+    try { localStorage.setItem(THEME_KEY, isDark ? 'dark' : 'light'); } catch { /* storage unavailable */ }
+  }, [isDark]);
 
   // Load Sessions on Mount & Polling/Refresh
   const loadSessions = useCallback(async () => {
@@ -464,6 +473,18 @@ function App() {
             <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" /></svg>
           </div>
           <h1 className="font-bold text-gray-900 tracking-tight text-sm">WH Staging</h1>
+          <button
+            onClick={() => setIsDark(d => !d)}
+            className="ml-auto p-1.5 rounded-md text-gray-500 hover:text-gray-900 hover:bg-gray-100 transition-colors"
+            title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+            aria-label={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+          >
+            {isDark ? (
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" /></svg>
+            ) : (
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" /></svg>
+            )}
+          </button>
         </div>
 
         <div className="p-4">

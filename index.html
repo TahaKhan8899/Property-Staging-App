@@ -6,8 +6,73 @@
     <title>WH Staging Assistant</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script>
+      // Apply the saved theme (or the OS preference) before first paint so there is no light flash
+      try {
+        var savedTheme = localStorage.getItem('staging:theme');
+        var prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        if (savedTheme === 'dark' || (!savedTheme && prefersDark)) document.documentElement.classList.add('dark');
+      } catch (e) { /* storage unavailable */ }
+    </script>
     <style>
       body { font-family: 'Inter', sans-serif; }
+
+      /* Dark mode: remaps the light utility classes the app uses. `.dark .x` outranks Tailwind's `.x`. */
+      html.dark { color-scheme: dark; --tw-ring-offset-color: #161b26; }
+      html.dark body { background-color: #0e121a; color: #e5e7eb; }
+
+      /* Surfaces */
+      .dark .bg-white, .dark .hover\:bg-white:hover { background-color: #161b26; }
+      .dark .bg-white\/90 { background-color: rgb(22 27 38 / 0.9); }
+      .dark .bg-gray-50 { background-color: #0e121a; }
+      .dark .bg-gray-100 { background-color: #1f2633; }
+      .dark .hover\:bg-gray-50:hover { background-color: #1c2230; }
+      .dark .hover\:bg-gray-100:hover { background-color: #252d3b; }
+      .dark .bg-gray-900.text-white { background-color: #374151; }
+      .dark .bg-gray-900.text-white.hover\:bg-black:hover { background-color: #4b5563; }
+
+      /* Borders */
+      .dark .border-gray-100 { border-color: #222a37; }
+      .dark .border-gray-200, .dark .hover\:border-gray-200:hover { border-color: #2a3241; }
+      .dark .border-gray-300, .dark .hover\:border-gray-300:hover { border-color: #3a4352; }
+
+      /* Text */
+      .dark .text-gray-900, .dark .hover\:text-gray-900:hover { color: #f3f4f6; }
+      .dark .text-gray-800 { color: #e5e7eb; }
+      .dark .text-gray-700, .dark .hover\:text-gray-700:hover { color: #d1d5db; }
+      .dark .text-gray-600 { color: #b4bac4; }
+      .dark .text-gray-500 { color: #9ca3af; }
+      .dark .text-gray-400 { color: #7b8492; }
+      .dark .placeholder-gray-400::placeholder { color: #6b7280; }
+
+      /* Indigo accents */
+      .dark .bg-indigo-50 { background-color: rgb(99 102 241 / 0.15); }
+      .dark .bg-indigo-50\/50 { background-color: rgb(99 102 241 / 0.08); }
+      .dark .bg-indigo-100 { background-color: rgb(99 102 241 / 0.25); }
+      .dark .border-indigo-100 { border-color: rgb(99 102 241 / 0.25); }
+      .dark .border-indigo-300, .dark .hover\:border-indigo-300:hover { border-color: rgb(129 140 248 / 0.5); }
+      .dark .text-indigo-600, .dark .hover\:text-indigo-600:hover { color: #818cf8; }
+      .dark .text-indigo-700, .dark .hover\:text-indigo-700:hover { color: #a5b4fc; }
+      .dark .text-indigo-800 { color: #c7d2fe; }
+
+      /* Status tints */
+      .dark .bg-red-50, .dark .hover\:bg-red-50:hover { background-color: rgb(239 68 68 / 0.12); }
+      .dark .border-red-200 { border-color: rgb(239 68 68 / 0.35); }
+      .dark .text-red-600, .dark .hover\:text-red-600:hover { color: #f87171; }
+      .dark .text-red-700 { color: #fca5a5; }
+      .dark .bg-amber-50 { background-color: rgb(245 158 11 / 0.12); }
+      .dark .hover\:bg-amber-100:hover { background-color: rgb(245 158 11 / 0.2); }
+      .dark .border-amber-200 { border-color: rgb(245 158 11 / 0.35); }
+      .dark .text-amber-700 { color: #fcd34d; }
+      .dark .bg-emerald-50 { background-color: rgb(16 185 129 / 0.12); }
+      .dark .hover\:bg-emerald-100:hover { background-color: rgb(16 185 129 / 0.2); }
+      .dark .border-emerald-200 { border-color: rgb(16 185 129 / 0.35); }
+      .dark .text-emerald-700 { color: #6ee7b7; }
+      .dark .bg-green-50 { background-color: rgb(34 197 94 / 0.12); }
+      .dark .bg-green-100 { background-color: rgb(34 197 94 / 0.2); }
+      .dark .border-green-200 { border-color: rgb(34 197 94 / 0.35); }
+      .dark .text-green-600 { color: #4ade80; }
+      .dark .text-green-800 { color: #86efac; }
     </style>
   <script type="importmap">
 {
