@@ -1192,6 +1192,9 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, referenceOptions = [], apiUsa
           originalUrl={room.previewUrl}
           stagedUrl={room.generatedImageUrl}
           onClose={() => setIsCompareOpen(false)}
+          versionIndex={currentVersionIndex}
+          versionCount={versions.length}
+          onNavigateVersion={handleVersionNavigation}
         />
       )}
       <PromptViewerModal
